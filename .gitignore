@@ -35,3 +35,6 @@ fuzz/target/
 .vscode/
 *.swp
 .DS_Store
+
+# Los modulos no fijan proveedores; los envs (repo privado) versionan su lock.
+infra/modules/**/.terraform.lock.hcl
