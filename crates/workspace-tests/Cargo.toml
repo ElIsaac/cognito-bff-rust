@@ -10,9 +10,11 @@ publish.workspace = true
 
 [dev-dependencies]
 application.workspace = true
+aws-sdk-dynamodb.workspace = true
 cargo_metadata.workspace = true
 domain.workspace = true
 in-memory = { path = "../adapters/in-memory" }
+session-dynamodb = { path = "../adapters/session-dynamodb" }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "test-util"] }
 tracing.workspace = true
 

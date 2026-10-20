@@ -1,0 +1,25 @@
+[package]
+name = "secrets-aws"
+description = "SecretProvider sobre AWS Secrets Manager con cache TTL, invalidacion y single-flight."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# `EnvSecretProvider`: lee los secretos del entorno (desarrollo local).
+local = []
+
+[dependencies]
+application.workspace = true
+aws-sdk-secretsmanager.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+
+[lints]
+workspace = true

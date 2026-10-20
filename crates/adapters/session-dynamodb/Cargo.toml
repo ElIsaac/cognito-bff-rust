@@ -1,0 +1,21 @@
+[package]
+name = "session-dynamodb"
+description = "SessionRepository, PendingAuthStore y WsTicketStore sobre una tabla unica de DynamoDB."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+application.workspace = true
+domain.workspace = true
+aws-sdk-dynamodb.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

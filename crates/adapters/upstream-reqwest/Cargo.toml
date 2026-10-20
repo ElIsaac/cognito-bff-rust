@@ -1,0 +1,31 @@
+[package]
+name = "upstream-reqwest"
+description = "UpstreamApi sobre reqwest: bearer, timeout total, tope de respuesta en streaming y sin redirecciones."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# Permite `http://` como destino. Solo para pruebas: no activar en el binario real.
+insecure-http = []
+
+[dependencies]
+application.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+domain.workspace = true
+axum = { workspace = true, features = ["tokio", "http1"] }
+bytes = "1.12.1"
+futures-util = { version = "0.3.34", default-features = false }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time", "sync"] }
+upstream-reqwest = { path = ".", features = ["insecure-http"] }
+
+[lints]
+workspace = true

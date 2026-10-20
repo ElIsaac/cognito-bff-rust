@@ -1,0 +1,30 @@
+[package]
+name = "oidc-cognito"
+description = "IdentityProvider sobre Amazon Cognito: authorize/token/revoke/logout y validacion del ID token (RS256, JWKS con cache)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+application.workspace = true
+domain.workspace = true
+base64.workspace = true
+jsonwebtoken.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+aws-lc-rs.workspace = true
+axum = { workspace = true, features = ["tokio", "http1", "form", "json"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time"] }
+
+[lints]
+workspace = true

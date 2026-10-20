@@ -126,6 +126,15 @@ async fn login_anotado(env: &Env, secretos: &mut Secretos) -> String {
     cookie
 }
 
+/// Instala `captura` como subscriber del hilo. Con un unico `Dispatch` vivo en el proceso,
+/// `tracing` cachea el interes de cada callsite contra ese subscriber y otro test en paralelo
+/// puede dejarlo desactivado; con dos, el interes se consulta en cada evento.
+fn capturar(captura: &Captura) -> (tracing::Dispatch, tracing::dispatcher::DefaultGuard) {
+    let otro = tracing::Dispatch::new(Captura::default());
+    let guard = tracing::dispatcher::set_default(&tracing::Dispatch::new(captura.clone()));
+    (otro, guard)
+}
+
 fn assert_sin_secretos(lineas: &[String], secretos: &Secretos) {
     for (nombre, valor) in &secretos.0 {
         if let Some(l) = lineas.iter().find(|l| l.contains(valor.as_str())) {
@@ -141,7 +150,7 @@ fn assert_sin_secretos(lineas: &[String], secretos: &Secretos) {
 #[tokio::test(start_paused = true)]
 async fn tracing_no_contiene_secretos_en_ningun_flujo() {
     let captura = Captura::default();
-    let _guard = tracing::subscriber::set_default(captura.clone());
+    let _guard = capturar(&captura);
     let env = Env::new();
     env.ports.idp().set_rotate_refresh(true);
     let mut secretos = Secretos::default();
@@ -254,7 +263,7 @@ async fn tracing_no_contiene_secretos_en_ningun_flujo() {
 #[tokio::test(start_paused = true)]
 async fn el_detector_de_fugas_detecta_una_fuga() {
     let captura = Captura::default();
-    let _guard = tracing::subscriber::set_default(captura.clone());
+    let _guard = capturar(&captura);
     tracing::info!(valor = %"secreto-que-no-deberia-salir-1234", "mensaje");
     let mut s = Secretos::default();
     s.anota("control", "secreto-que-no-deberia-salir-1234");
