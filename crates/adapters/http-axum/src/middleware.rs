@@ -102,6 +102,30 @@ fn new_request_id(rng: &impl RandomGenerator) -> String {
         })
 }
 
+/// Cabeceras de seguridad propias, aunque no haya `CloudFront` delante (auditoria ZAP): HSTS,
+/// `nosniff` y `Cross-Origin-Resource-Policy` en todo; en `/auth/*`, que nunca sirve HTML,
+/// una CSP que no deja cargar ni enmarcar nada (si la respuesta no trae otra).
+fn security_headers(h: &mut HeaderMap, is_auth: bool) {
+    h.insert(
+        header::STRICT_TRANSPORT_SECURITY,
+        HeaderValue::from_static("max-age=63072000"),
+    );
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    h.insert(
+        HeaderName::from_static("cross-origin-resource-policy"),
+        HeaderValue::from_static("same-origin"),
+    );
+    if is_auth && !h.contains_key(header::CONTENT_SECURITY_POLICY) {
+        h.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+        );
+    }
+}
+
 /// `X-Request-ID`, span de la peticion, log de acceso y cuerpo de los errores.
 pub(crate) async fn context<P: Ports, S: SecretProvider>(
     State(st): State<St<P, S>>,
@@ -155,6 +179,7 @@ pub(crate) async fn context<P: Ports, S: SecretProvider>(
         resp.headers_mut()
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
+    security_headers(resp.headers_mut(), is_auth);
     resp.headers_mut().insert(REQUEST_ID, id_value);
 
     let status = resp.status().as_u16();

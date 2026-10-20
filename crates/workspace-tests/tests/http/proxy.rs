@@ -255,11 +255,16 @@ async fn set_cookie_del_upstream_se_elimina() {
             "cache-control",
             "content-length",
             "content-type",
+            "cross-origin-resource-policy",
             "etag",
+            "strict-transport-security",
+            "x-content-type-options",
             "x-request-id"
         ]
     );
     assert_eq!(r.header("cache-control"), Some("no-store"));
+    // El `max-age=0` del upstream no apaga el HSTS del BFF.
+    assert_eq!(r.header("strict-transport-security"), Some("max-age=63072000"));
     assert_eq!(r.header("content-length"), Some("11"));
     assert_eq!(r.header("etag"), Some("\"abc\""));
 }

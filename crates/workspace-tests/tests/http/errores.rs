@@ -308,3 +308,28 @@ async fn las_respuestas_de_auth_son_no_store() {
         assert_eq!(r.header("cache-control"), Some("no-store"), "{nombre}");
     }
 }
+
+/// Auditoria ZAP: HSTS, `nosniff` y `Cross-Origin-Resource-Policy` en toda respuesta, sin
+/// depender de CloudFront; en `/auth/*`, ademas, una CSP que no deja cargar ni enmarcar nada.
+#[tokio::test(start_paused = true)]
+async fn cabeceras_de_seguridad_en_toda_respuesta() {
+    let env = Env::new();
+    let id = env.sesion().await;
+    for (r, auth) in [
+        (env.send(Req::get("/auth/me").sesion(&id)).await, true),
+        (env.send(Req::get("/auth/me")).await, true),
+        (env.send(Req::get("/auth/login?returnTo=/")).await, true),
+        (env.send(Req::get("/api/orders").sesion(&id)).await, false),
+        (env.send(Req::get("/no-existe")).await, false),
+    ] {
+        assert_eq!(r.header("strict-transport-security"), Some("max-age=63072000"));
+        assert_eq!(r.header("x-content-type-options"), Some("nosniff"));
+        assert_eq!(r.header("cross-origin-resource-policy"), Some("same-origin"));
+        let csp = r.header("content-security-policy");
+        if auth {
+            assert_eq!(csp, Some("default-src 'none'; frame-ancestors 'none'"));
+        } else {
+            assert_eq!(csp, None);
+        }
+    }
+}
