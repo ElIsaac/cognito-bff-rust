@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::DomainError;
 
 const SUBJECT_MAX_LEN: usize = 128;
@@ -5,6 +7,9 @@ const EMAIL_MAX_LEN: usize = 254;
 const GROUP_MAX_LEN: usize = 128;
 const NAME_MAX_LEN: usize = 256;
 const GROUPS_MAX: usize = 100;
+const ATTRIBUTES_MAX: usize = 20;
+const ATTRIBUTE_KEY_MAX_LEN: usize = 64;
+const ATTRIBUTE_VALUE_MAX_LEN: usize = 256;
 
 fn printable_no_space(s: &str) -> bool {
     s.bytes().all(|b| b.is_ascii_graphic())
@@ -85,6 +90,7 @@ pub struct UserInfo {
     email: Option<Email>,
     name: Option<String>,
     groups: Vec<GroupName>,
+    attributes: BTreeMap<String, String>,
 }
 
 impl UserInfo {
@@ -98,7 +104,31 @@ impl UserInfo {
             email,
             name,
             groups,
+            attributes: BTreeMap::new(),
         }
+    }
+
+    /// Claims adicionales de una lista blanca configurada (p. ej. `custom:tenant_id`).
+    /// Se descartan en silencio las entradas con clave o valor fuera de forma y todo lo que
+    /// pase de 20 entradas.
+    #[must_use]
+    pub fn with_attributes(mut self, attributes: impl IntoIterator<Item = (String, String)>) -> Self {
+        self.attributes = attributes
+            .into_iter()
+            .filter(|(k, v)| {
+                !k.is_empty()
+                    && k.len() <= ATTRIBUTE_KEY_MAX_LEN
+                    && printable_no_space(k)
+                    && v.len() <= ATTRIBUTE_VALUE_MAX_LEN
+                    && !v.chars().any(char::is_control)
+            })
+            .take(ATTRIBUTES_MAX)
+            .collect();
+        self
+    }
+
+    pub fn attributes(&self) -> &BTreeMap<String, String> {
+        &self.attributes
     }
 
     pub fn sub(&self) -> &Subject {
@@ -149,5 +179,19 @@ mod tests {
             vec![],
         );
         assert_eq!(u.name(), None);
+    }
+
+    #[test]
+    fn atributos_filtrados() {
+        let u = UserInfo::new(Subject::new("s".into()).unwrap(), None, None, vec![]).with_attributes([
+            ("custom:tenant_id".into(), "t1".into()),
+            ("con espacio".into(), "x".into()),
+            ("k".into(), "a\nb".into()),
+        ]);
+        assert_eq!(u.attributes().len(), 1);
+        assert_eq!(
+            u.attributes().get("custom:tenant_id").map(String::as_str),
+            Some("t1")
+        );
     }
 }

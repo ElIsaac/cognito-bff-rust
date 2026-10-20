@@ -1,9 +1,8 @@
 [workspace]
 resolver = "3"
-# Cuando exista el primer adaptador, agregar "crates/adapters/*": cargo falla si el glob no
-# coincide con ningun directorio, asi que hoy no puede estar. El test de arquitectura
-# (crates/workspace-tests) ya clasifica por ruta los crates bajo crates/adapters/.
-members = ["crates/*"]
+# `crates/*` no sirve: crates/adapters es un directorio sin Cargo.toml. Al agregar un crate
+# de primer nivel (p. ej. lambda) hay que listarlo aqui.
+members = ["crates/domain", "crates/application", "crates/workspace-tests", "crates/adapters/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,6 +14,7 @@ publish = false
 
 [workspace.dependencies]
 domain = { path = "crates/domain" }
+application = { path = "crates/application" }
 base64 = "0.23.1"
 cargo_metadata = "0.23.1"
 proptest = "1.11.0"
@@ -22,6 +22,8 @@ secrecy = "0.10.3"
 sha2 = "0.11.0"
 subtle = "2.6.1"
 thiserror = "2.0.21"
+tokio = { version = "1.53.2", default-features = false }
+tracing = "0.1.44"
 url = "2.5.8"
 zeroize = "1.9.0"
 

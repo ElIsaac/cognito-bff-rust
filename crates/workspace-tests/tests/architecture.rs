@@ -7,7 +7,7 @@ use std::path::Path;
 use cargo_metadata::{DependencyKind, MetadataCommand};
 
 const DOMAIN_PERMITIDAS: &[&str] = &["base64", "secrecy", "sha2", "subtle", "thiserror", "zeroize"];
-const APPLICATION_PERMITIDAS: &[&str] = &["domain", "tracing"];
+const APPLICATION_PERMITIDAS: &[&str] = &["domain", "thiserror", "tracing"];
 
 const PROHIBIDAS_EXACTAS: &[&str] = &[
     "tokio",

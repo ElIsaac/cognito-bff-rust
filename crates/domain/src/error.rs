@@ -10,6 +10,8 @@ pub enum DomainError {
     InvalidCodeVerifier,
     #[error("returnTo invalido")]
     InvalidReturnTo,
+    #[error("ruta de proxy invalida")]
+    InvalidProxyPath,
     #[error("email invalido")]
     InvalidEmail,
     #[error("nombre de grupo invalido")]

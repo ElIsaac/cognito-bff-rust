@@ -50,6 +50,12 @@ token!(
     RefreshToken
 );
 
+token!(
+    /// `code` de autorizacion recibido en el callback. De un solo uso, pero secreto hasta
+    /// que se canjea.
+    AuthCode
+);
+
 /// Tokens de una sesion. El ID token no se guarda: sus claims ya validados viven en
 /// `UserInfo`.
 #[derive(Debug, Clone)]

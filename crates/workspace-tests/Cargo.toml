@@ -1,6 +1,6 @@
 [package]
 name = "workspace-tests"
-description = "Tests transversales del workspace: limites de arquitectura entre crates."
+description = "Tests transversales del workspace: limites de arquitectura y suite de seguridad."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,12 @@ repository.workspace = true
 publish.workspace = true
 
 [dev-dependencies]
+application.workspace = true
 cargo_metadata.workspace = true
+domain.workspace = true
+in-memory = { path = "../adapters/in-memory" }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "test-util"] }
+tracing.workspace = true
 
 [lints]
 workspace = true

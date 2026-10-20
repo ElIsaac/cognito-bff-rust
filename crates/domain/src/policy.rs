@@ -119,9 +119,10 @@ impl SessionPolicy {
         now.saturating_add(self.0.refresh_lease)
     }
 
-    /// Hay otra invocacion refrescando y su lease no ha caducado.
+    /// Hay otra invocacion refrescando y su lease no ha caducado. Mismo criterio que la
+    /// condicion del almacen (`lock < now` = libre): en `now == until` sigue tomado.
     pub fn lease_held(s: &Session, now: Timestamp) -> bool {
-        s.refresh_lock_until.is_some_and(|until| until > now)
+        s.refresh_lock_until.is_some_and(|until| until >= now)
     }
 }
 
@@ -217,8 +218,8 @@ mod tests {
         let now = Timestamp::from_secs(T0);
         assert!(!SessionPolicy::lease_held(&s, now));
         s.refresh_lock_until = Some(p.lease_until(now));
-        assert!(SessionPolicy::lease_held(&s, Timestamp::from_secs(T0 + 9)));
-        assert!(!SessionPolicy::lease_held(&s, Timestamp::from_secs(T0 + 10)));
+        assert!(SessionPolicy::lease_held(&s, Timestamp::from_secs(T0 + 10)));
+        assert!(!SessionPolicy::lease_held(&s, Timestamp::from_secs(T0 + 11)));
     }
 
     #[test]
