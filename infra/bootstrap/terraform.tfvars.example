@@ -1,0 +1,24 @@
+# cp terraform.tfvars.example terraform.tfvars
+# La passphrase NO va aqui: export TF_VAR_bootstrap_passphrase=$(openssl rand -base64 32)
+
+region            = "us-east-2"
+project           = "cognito-bff"
+github_owner      = "OWNER"
+github_repo       = "REPO-DE-ENVS"
+envs              = ["dev", "prod"]
+state_bucket_name = "mi-empresa-cognito-bff-tfstate"
+kms_alias         = "alias/cognito-bff-state"
+
+# Solo hay un proveedor OIDC de GitHub por cuenta.
+create_github_oidc_provider       = true
+existing_github_oidc_provider_arn = null
+# existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+
+# Buckets de la SPA que el modulo cloudfront protege con bucket policy, y pools de Cognito
+# donde se crea el app client (vacio = cualquiera de la cuenta y la region).
+spa_bucket_arns        = ["arn:aws:s3:::mi-empresa-spa-dev", "arn:aws:s3:::mi-empresa-spa-prod"]
+cognito_user_pool_arns = []
+
+tags = {
+  Owner = "plataforma"
+}

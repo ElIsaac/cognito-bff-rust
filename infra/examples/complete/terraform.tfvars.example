@@ -1,0 +1,19 @@
+# cp terraform.tfvars.example terraform.tfvars
+# Todos los valores son de ejemplo.
+
+region               = "us-east-2"
+name                 = "cognito-bff-dev"
+domain               = "app.example.com"
+acm_certificate_arn  = "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+spa_bucket_name      = "mi-empresa-spa-dev"
+cognito_user_pool_id = "us-east-2_AbCdEfGhI"
+cognito_domain       = "https://auth.example.com"
+upstream_base_url    = "https://api.example.com"
+lambda_zip_path      = "../../../target/lambda/lambda/bootstrap.zip"
+
+extra_callback_urls = ["http://localhost:5173/auth/callback"]
+
+tags = {
+  Project = "cognito-bff"
+  Env     = "dev"
+}
