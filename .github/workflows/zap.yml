@@ -1,0 +1,35 @@
+name: ZAP baseline
+
+# Escaneo pasivo contra un entorno ya desplegado. No usa AWS ni secretos.
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "URL https del entorno a escanear (p. ej. https://app.example.com)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  zap:
+    name: ZAP baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Validar la URL
+        env:
+          TARGET_URL: ${{ inputs.target_url }}
+        run: |
+          if ! printf '%s' "$TARGET_URL" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$'; then
+            echo "::error::target_url debe ser una URL https sin query ni credenciales"
+            exit 1
+          fi
+      - uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+        with:
+          target: ${{ inputs.target_url }}
+          # Sin issues: el workflow solo tiene `contents: read`. El informe va como artefacto.
+          allow_issue_writing: false
+          fail_action: false
+          artifact_name: zap-baseline-report

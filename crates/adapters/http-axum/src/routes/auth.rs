@@ -16,7 +16,7 @@ const QUERY_MAX: usize = 8 * 1024;
 
 /// Valor de `key` tras una sola decodificacion; `None` si falta, esta repetido o la query
 /// es demasiado larga.
-fn single(query: Option<&str>, key: &str) -> Option<String> {
+pub(crate) fn single(query: Option<&str>, key: &str) -> Option<String> {
     let q = query.filter(|q| q.len() <= QUERY_MAX)?;
     let mut values = url::form_urlencoded::parse(q.as_bytes())
         .filter(|(k, _)| k == key)

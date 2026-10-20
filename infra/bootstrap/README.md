@@ -10,6 +10,8 @@ que necesitan los demas estados (PLAN §11.1, decision 4):
 - Roles `gh-deploy-<env>` con confianza en `repo:OWNER/REPO:environment:<env>-plan` y
   `repo:OWNER/REPO:environment:<env>` (decision 3) y permisos acotados por prefijo
   `<project>-<env>*` y region donde IAM lo permite.
+- Una *permissions boundary* por ambiente (`<project>-<env>-lambda-boundary`) que todo rol
+  creado por `gh-deploy-<env>` debe llevar (ver "Techo de permisos").
 
 ## Un proveedor OIDC por cuenta
 
@@ -67,6 +69,39 @@ Pasar los dos (o ninguno) falla con un mensaje claro.
    git status --short   # no debe listar terraform.tfstate*
    ```
 
+## Techo de permisos (cierra la escalada de privilegios)
+
+Los roles `gh-deploy-<env>` deben poder crear el rol de la Lambda y ponerle una politica
+inline. Sin mas control, quien asuma el rol de deploy (un workflow comprometido, un PR
+malicioso aprobado) podria crear `<project>-<env>-x` con `AdministratorAccess` y asumirlo. Lo
+que lo impide:
+
+1. El bootstrap crea la politica administrada `<project>-<env>-lambda-boundary` (techo) con lo
+   unico que necesita la Lambda del BFF: `logs:CreateLogStream` y `PutLogEvents` en sus log
+   groups, `dynamodb:GetItem/PutItem/UpdateItem/DeleteItem` en las tablas
+   `<project>-<env>*`, `secretsmanager:GetSecretValue` en los secretos `<project>-<env>*` y,
+   si lo configuras, KMS sobre `lambda_kms_key_arns`. Tablas o secretos fuera del prefijo
+   (un `table_name` propio, un `client_secret_arn` creado a mano) se agregan con
+   `lambda_extra_table_arns` y `lambda_extra_secret_arns`; si no, el techo los niega.
+2. `iam:CreateRole`, `iam:PutRolePolicy` y `iam:PutRolePermissionsBoundary` solo se permiten con
+   `iam:PermissionsBoundary` igual al ARN del techo; un `Deny` explicito repite la regla
+   (tambien para `iam:AttachRolePolicy`), de modo que ninguna otra politica la abra.
+3. `iam:DeleteRolePermissionsBoundary` esta negado, y tambien `CreatePolicyVersion`,
+   `DeletePolicy`, `DeletePolicyVersion` y `SetDefaultPolicyVersion` sobre el techo.
+
+Los permisos efectivos de un rol con techo son la interseccion de su politica y el techo:
+aunque el deploy ponga una politica con `*`, el rol no sale de lo anterior.
+
+Orden al adoptarlo en una cuenta que ya tiene el rol de la Lambda sin techo: aplica el bootstrap
+(crea los techos y la politica nueva `bff-iam`), y despues aplica el env con
+`permissions_boundary_arn` puesto. El modulo `bff` actualiza el techo del rol antes que su
+politica, que es el orden que aceptan los roles `gh-deploy`. Con `permissions_boundary_arn =
+null` (el valor por omision) el modulo se comporta como antes, pero un rol `gh-deploy` ya no
+podra crearlo.
+
+El techo y las politicas de deploy son politicas administradas distintas del rol de la Lambda:
+`gh-deploy-<env>` no tiene ninguna accion IAM sobre politicas, solo sobre roles.
+
 ## Despues del bootstrap
 
 - En el repo de envs crea los GitHub environments `<env>` y `<env>-plan` y limita los
@@ -74,12 +109,14 @@ Pasar los dos (o ninguno) falla con un mensaje claro.
 - Cada env usa el bucket y la llave: `backend "s3"` con `key = "envs/<env>/terraform.tfstate"`
   (el rol solo escribe bajo `envs/<env>/*`) y `key_provider "aws_kms"` con el alias de la
   salida `kms_alias`.
-- Los roles pueden crear roles con el prefijo `<project>-<env>*`; si quieres cerrar eso del
-  todo, agrega una permissions boundary en una politica propia.
+- Pasa la salida `lambda_boundary_policy_arns` (la del ambiente) como `permissions_boundary_arn`
+  al modulo `bff`: sin ella, `gh-deploy-<env>` no puede crear ni modificar el rol de la
+  Lambda (ver "Techo de permisos").
 - Los permisos de CloudFront y API Gateway no admiten nombres en el ARN: quedan acotados por
   tipo de recurso y region, no por prefijo.
 
 ## Variables y salidas
 
 Ver `variables.tf` y `outputs.tf`. Salidas: `state_bucket_name`, `state_bucket_arn`,
-`kms_key_arn`, `kms_alias`, `github_oidc_provider_arn`, `deploy_role_arns`.
+`kms_key_arn`, `kms_alias`, `github_oidc_provider_arn`, `deploy_role_arns` y
+`lambda_boundary_policy_arns` (por ambiente).

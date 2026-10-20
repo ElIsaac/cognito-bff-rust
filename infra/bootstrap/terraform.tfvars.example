@@ -22,3 +22,9 @@ cognito_user_pool_arns = []
 tags = {
   Owner = "plataforma"
 }
+
+# Fuera del prefijo `<project>-<env>*`: tablas, secretos y llaves que la Lambda usa y que el
+# techo de sus roles debe admitir (vacio = solo lo que lleva el prefijo).
+lambda_extra_table_arns  = []
+lambda_extra_secret_arns = []
+lambda_kms_key_arns      = []

@@ -11,6 +11,9 @@ cognito_domain       = "https://auth.example.com"
 upstream_base_url    = "https://api.example.com"
 lambda_zip_path      = "../../../target/lambda/lambda/bootstrap.zip"
 
+# Techo de permisos del rol de la Lambda: salida `lambda_boundary_policy_arns` del bootstrap.
+permissions_boundary_arn = "arn:aws:iam::123456789012:policy/cognito-bff-dev-lambda-boundary"
+
 extra_callback_urls = ["http://localhost:5173/auth/callback"]
 
 tags = {

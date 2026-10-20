@@ -1,0 +1,160 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Sin AWS en ningun job (decision 22): no hay id-token ni secretos.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  NIGHTLY: nightly-2026-09-30
+  CARGO_FUZZ_VERSION: 0.12.0
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local:2.5.0
+        ports:
+          - 8000:8000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: DynamoDB Local listo
+        run: |
+          endpoint="${DYNAMODB_ENDPOINT_URL:-http://localhost:8000}"
+          curl -s -o /dev/null --retry 30 --retry-delay 1 --retry-connrefused "$endpoint"
+      - name: test
+        run: |
+          # Los tests de contrato leen el endpoint de DYNAMODB_ENDPOINT_URL.
+          export DYNAMODB_ENDPOINT_URL="${DYNAMODB_ENDPOINT_URL:-http://localhost:8000}"
+          cargo test --workspace
+      - name: Build con la feature local
+        run: cargo check -p lambda --features local
+
+  supply-chain:
+    name: Cadena de suministro (deny, audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Herramientas
+        run: .github/scripts/install-tool.sh cargo-deny cargo-audit
+      - name: cargo deny
+        run: cargo deny check
+      - name: cargo audit
+        run: cargo audit
+
+  secrets:
+    name: Secretos (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Herramientas
+        run: .github/scripts/install-tool.sh gitleaks
+      - name: gitleaks (historial)
+        run: gitleaks git --redact --verbose --no-banner .
+      - name: gitleaks (arbol de trabajo)
+        run: gitleaks dir --redact --verbose --no-banner .
+
+  infra:
+    name: Infra (fmt, validate, tflint, trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Herramientas
+        run: .github/scripts/install-tool.sh tofu tflint trivy
+      - name: tofu fmt
+        run: tofu fmt -check -recursive infra/
+      - name: validate y tflint
+        env:
+          # El proveedor aws pesa ~800 MB: una sola copia compartida entre los directorios.
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/tofu-plugins
+        run: |
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          for dir in infra/modules/* infra/bootstrap infra/examples/complete; do
+            echo "::group::$dir"
+            tofu -chdir="$dir" init -backend=false -input=false
+            tofu -chdir="$dir" validate
+            tflint --chdir="$dir"
+            echo "::endgroup::"
+          done
+      - name: trivy config
+        run: trivy config --severity HIGH,CRITICAL --exit-code 1 infra/
+
+  node:
+    name: Node (funcion de CloudFront)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: node --test
+        run: node --test infra/modules/cloudfront/functions/*.test.mjs
+
+  fuzz-smoke:
+    name: Fuzz (humo, 30 s por target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain nightly
+        run: rustup toolchain install "$NIGHTLY" --profile minimal
+      - name: cargo-fuzz
+        run: |
+          if ! cargo fuzz --version 2>/dev/null | grep -qF "$CARGO_FUZZ_VERSION"; then
+            cargo install cargo-fuzz --version "$CARGO_FUZZ_VERSION" --locked
+          fi
+      - name: Targets
+        working-directory: fuzz
+        run: |
+          for target in return_to proxy_path cookie_header callback_query; do
+            mkdir -p "corpus/$target"
+            echo "::group::$target"
+            cargo "+$NIGHTLY" fuzz run "$target" "corpus/$target" "seeds/$target" -- -max_total_time=30
+            echo "::endgroup::"
+          done
+
+  workflows:
+    name: Lint de workflows (actionlint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Herramientas
+        run: .github/scripts/install-tool.sh actionlint
+      - name: actionlint
+        run: actionlint

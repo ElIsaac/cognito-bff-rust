@@ -1,8 +1,8 @@
 # ---------------------------------------------------------------------------------------
 # Permisos de los roles gh-deploy-<env>
 #
-# Tres politicas administradas por ambiente (cada una por debajo del tope de 6144
-# caracteres): estado, servicios de datos/computo y red/IAM/CloudFront. Lo que IAM permite
+# Cuatro politicas administradas por ambiente (cada una por debajo del tope de 6144
+# caracteres): estado, servicios de datos/computo, red/CloudFront e IAM (con techo). Lo que IAM permite
 # acotar por nombre se acota por `<project>-<env>*` y por region; lo demas queda como
 # comodin de recurso con la razon anotada.
 # ---------------------------------------------------------------------------------------
@@ -186,38 +186,6 @@ data "aws_iam_policy_document" "bff_network" {
     resources = ["*"]
   }
 
-  statement {
-    sid = "RolDeLaLambda"
-    actions = [
-      "iam:CreateRole",
-      "iam:DeleteRole",
-      "iam:GetRole",
-      "iam:UpdateRole",
-      "iam:UpdateAssumeRolePolicy",
-      "iam:PutRolePolicy",
-      "iam:GetRolePolicy",
-      "iam:DeleteRolePolicy",
-      "iam:ListRolePolicies",
-      "iam:ListAttachedRolePolicies",
-      "iam:ListInstanceProfilesForRole",
-      "iam:TagRole",
-      "iam:UntagRole",
-    ]
-    resources = ["arn:aws:iam::${local.account_id}:role/${var.project}-${each.key}*"]
-  }
-
-  statement {
-    sid       = "PasarElRolALambda"
-    actions   = ["iam:PassRole"]
-    resources = ["arn:aws:iam::${local.account_id}:role/${var.project}-${each.key}*"]
-
-    condition {
-      test     = "StringEquals"
-      variable = "iam:PassedToService"
-      values   = ["lambda.amazonaws.com"]
-    }
-  }
-
   # El ID de la distribucion y de las politicas no existe hasta crearlas: no se pueden acotar
   # por nombre. Solo la funcion lleva el prefijo.
   statement {
@@ -282,11 +250,160 @@ data "aws_iam_policy_document" "bff_network" {
   }
 }
 
+# --- IAM: roles de la Lambda con techo obligatorio ---------------------------------------
+#
+# Sin techo, quien asume `gh-deploy-<env>` podria crear un rol `<project>-<env>-x` con
+# `AdministratorAccess` y asumirlo (escalada de privilegios). Con el techo:
+#   - Allow: crear roles y ponerles politicas solo si el rol queda con el techo del env.
+#   - Deny: lo mismo al reves (si falta el techo o es otro), mas quitar el techo y tocar la
+#     politica del techo. El Deny gana aunque otra politica permita la accion.
+# Los permisos efectivos de un rol creado son la interseccion de su politica y el techo.
+
+locals {
+  boundary_arns = { for env in var.envs : env => aws_iam_policy.lambda_boundary[env].arn }
+}
+
+data "aws_iam_policy_document" "bff_iam" {
+  for_each = local.envs
+
+  # No ensanchan permisos: no necesitan condicion.
+  statement {
+    sid = "RolDeLaLambdaLectura"
+    actions = [
+      "iam:DeleteRole",
+      "iam:GetRole",
+      "iam:UpdateRole",
+      "iam:UpdateAssumeRolePolicy",
+      "iam:GetRolePolicy",
+      "iam:DeleteRolePolicy",
+      "iam:ListRolePolicies",
+      "iam:ListAttachedRolePolicies",
+      "iam:ListInstanceProfilesForRole",
+      "iam:TagRole",
+      "iam:UntagRole",
+    ]
+    resources = ["arn:aws:iam::${local.account_id}:role/${var.project}-${each.key}*"]
+  }
+
+  statement {
+    sid = "RolDeLaLambdaConTecho"
+    actions = [
+      "iam:CreateRole",
+      "iam:PutRolePolicy",
+      "iam:PutRolePermissionsBoundary",
+    ]
+    resources = ["arn:aws:iam::${local.account_id}:role/${var.project}-${each.key}*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PermissionsBoundary"
+      values   = [local.boundary_arns[each.key]]
+    }
+  }
+
+  statement {
+    sid       = "PasarElRolALambda"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${local.account_id}:role/${var.project}-${each.key}*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["lambda.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid    = "SinTechoNoHayRol"
+    effect = "Deny"
+    actions = [
+      "iam:CreateRole",
+      "iam:PutRolePolicy",
+      "iam:AttachRolePolicy",
+      "iam:PutRolePermissionsBoundary",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringNotEquals"
+      variable = "iam:PermissionsBoundary"
+      values   = [local.boundary_arns[each.key]]
+    }
+  }
+
+  statement {
+    sid       = "NoQuitarElTecho"
+    effect    = "Deny"
+    actions   = ["iam:DeleteRolePermissionsBoundary"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "NoTocarLaPoliticaDelTecho"
+    effect = "Deny"
+    actions = [
+      "iam:CreatePolicyVersion",
+      "iam:DeletePolicy",
+      "iam:DeletePolicyVersion",
+      "iam:SetDefaultPolicyVersion",
+    ]
+    resources = [local.boundary_arns[each.key]]
+  }
+}
+
+# Techo de los roles de la Lambda: lo que el BFF necesita y nada mas.
+data "aws_iam_policy_document" "lambda_boundary" {
+  for_each = local.envs
+
+  statement {
+    sid       = "Logs"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["arn:aws:logs:${local.region_account}:log-group:/aws/lambda/${var.project}-${each.key}*:*"]
+  }
+
+  statement {
+    sid = "Sesiones"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:DeleteItem",
+    ]
+    resources = concat(
+      ["arn:aws:dynamodb:${local.region_account}:table/${var.project}-${each.key}*"],
+      var.lambda_extra_table_arns,
+    )
+  }
+
+  statement {
+    sid       = "Secretos"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = concat(["arn:aws:secretsmanager:${local.region_account}:secret:${var.project}-${each.key}*"], var.lambda_extra_secret_arns)
+  }
+
+  dynamic "statement" {
+    for_each = length(var.lambda_kms_key_arns) > 0 ? [var.lambda_kms_key_arns] : []
+    content {
+      sid       = "LlaveDeLaTabla"
+      actions   = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+      resources = statement.value
+    }
+  }
+}
+
+resource "aws_iam_policy" "lambda_boundary" {
+  for_each = local.envs
+
+  name        = "${var.project}-${each.key}-lambda-boundary"
+  description = "Techo de permisos de los roles de la Lambda de ${var.project}-${each.key}."
+  policy      = data.aws_iam_policy_document.lambda_boundary[each.key].json
+}
+
 # --- Politicas y adjuntos ---------------------------------------------------------------
 
 locals {
   deploy_policies = {
-    for pair in setproduct(var.envs, ["state-access", "bff-services", "bff-network"]) :
+    for pair in setproduct(var.envs, ["state-access", "bff-services", "bff-network", "bff-iam"]) :
     "${pair[0]}/${pair[1]}" => {
       env  = pair[0]
       tipo = pair[1]
@@ -296,6 +413,7 @@ locals {
     "state-access" = data.aws_iam_policy_document.state_access
     "bff-services" = data.aws_iam_policy_document.bff_services
     "bff-network"  = data.aws_iam_policy_document.bff_network
+    "bff-iam"      = data.aws_iam_policy_document.bff_iam
   }
 }
 

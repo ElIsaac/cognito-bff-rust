@@ -1,0 +1,49 @@
+[package]
+name = "cognito-bff-fuzz"
+description = "Targets de cargo-fuzz para los parsers que reciben texto del navegador."
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+license = "Apache-2.0 OR MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Workspace propio: cargo-fuzz exige nightly y este crate no debe afectar al workspace
+# principal (que compila con la toolchain estable fijada en rust-toolchain.toml).
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+domain = { path = "../crates/domain" }
+http-axum = { path = "../crates/adapters/http-axum", features = ["fuzzing"] }
+url = "2.5.8"
+
+[[bin]]
+name = "return_to"
+path = "fuzz_targets/return_to.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proxy_path"
+path = "fuzz_targets/proxy_path.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cookie_header"
+path = "fuzz_targets/cookie_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "callback_query"
+path = "fuzz_targets/callback_query.rs"
+test = false
+doc = false
+bench = false

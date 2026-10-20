@@ -56,6 +56,12 @@ variable "csp" {
   default     = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 }
 
+variable "permissions_boundary_arn" {
+  description = "Techo de permisos del rol de la Lambda (salida `lambda_boundary_policy_arns` de `infra/bootstrap`). Obligatorio si despliegas con un rol `gh-deploy-<env>`."
+  type        = string
+  default     = null
+}
+
 variable "tags" {
   description = "Etiquetas de todos los recursos."
   type        = map(string)

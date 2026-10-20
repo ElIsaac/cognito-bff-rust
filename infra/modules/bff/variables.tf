@@ -200,6 +200,12 @@ variable "ssm_prefix" {
   default     = null
 }
 
+variable "permissions_boundary_arn" {
+  description = "Techo de permisos (permissions boundary) del rol de la Lambda; null = sin techo. Los roles `gh-deploy-<env>` de `infra/bootstrap` exigen el techo que ese bootstrap crea (salida `lambda_boundary_policy_arns`)."
+  type        = string
+  default     = null
+}
+
 variable "tags" {
   description = "Etiquetas de todos los recursos."
   type        = map(string)

@@ -27,3 +27,8 @@ output "deploy_role_arns" {
   description = "ARN de cada rol `gh-deploy-<env>`."
   value       = { for env, role in aws_iam_role.deploy : env => role.arn }
 }
+
+output "lambda_boundary_policy_arns" {
+  description = "ARN del techo de permisos por ambiente: se pasa como `permissions_boundary_arn` al modulo `bff`."
+  value       = local.boundary_arns
+}

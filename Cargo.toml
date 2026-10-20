@@ -4,6 +4,9 @@ resolver = "3"
 # de primer nivel (p. ej. lambda) hay que listarlo aqui.
 members = ["crates/domain", "crates/application", "crates/workspace-tests", "crates/adapters/*", "crates/lambda"]
 
+# Crate de cargo-fuzz: nightly y workspace propio.
+exclude = ["fuzz"]
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"

@@ -9,6 +9,10 @@ mod errors;
 mod middleware;
 mod routes;
 
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing;
+
 use std::sync::Arc;
 
 use application::App;

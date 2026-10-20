@@ -88,6 +88,24 @@ variable "cognito_user_pool_arns" {
   default     = []
 }
 
+variable "lambda_extra_table_arns" {
+  description = "Tablas DynamoDB fuera del prefijo `<project>-<env>*` que la Lambda puede usar (p. ej. con `table_name` propio en el modulo `bff`). Entran al techo de los roles."
+  type        = list(string)
+  default     = []
+}
+
+variable "lambda_extra_secret_arns" {
+  description = "Secretos fuera del prefijo `<project>-<env>*` que la Lambda puede leer (p. ej. un `client_secret_arn` creado a mano). Entran al techo de los roles."
+  type        = list(string)
+  default     = []
+}
+
+variable "lambda_kms_key_arns" {
+  description = "Llaves KMS que la Lambda usa (`dynamodb_kms_key_arn` del modulo `bff`). Vacio = el techo no da permisos de KMS."
+  type        = list(string)
+  default     = []
+}
+
 variable "max_session_duration_secs" {
   description = "Duracion maxima de la sesion de los roles de deploy."
   type        = number

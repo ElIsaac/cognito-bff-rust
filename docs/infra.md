@@ -7,7 +7,7 @@ un bootstrap y un ejemplo. Las instancias (`envs/dev`, `envs/prod`) van en un re
 |---|---|
 | `infra/modules/bff` | Lambda, HTTP API, tabla de sesiones, secretos, app client opcional |
 | `infra/modules/cloudfront` | Distribucion completa: SPA en S3 y BFF detras |
-| `infra/bootstrap` | Se corre una vez: bucket de estado, llave KMS, OIDC de GitHub y roles de deploy |
+| `infra/bootstrap` | Se corre una vez: bucket de estado, llave KMS, OIDC de GitHub, roles de deploy y techo de permisos de la Lambda |
 | `infra/examples/complete` | Composicion de `bff` y `cloudfront` con valores de ejemplo |
 
 Requisitos: OpenTofu `>= 1.12.0`, proveedor `aws >= 6.0.0, < 7.0.0` y `random >= 3.7.0, < 4.0.0`.
@@ -34,6 +34,9 @@ Ver `infra/modules/bff/variables.tf` para la lista completa. Las entradas princi
 
 Salidas usadas por `cloudfront`: `api_domain` y `origin_verify_secret_arn`. Tambien expone
 `api_endpoint`, `table_name`, `table_arn`, `lambda_function_name`, `lambda_role_arn` y `client_id`.
+
+`permissions_boundary_arn` (por omision `null`) pone una permissions boundary al rol de la
+Lambda. Con los roles `gh-deploy-<env>` de `bootstrap` es obligatoria: ver abajo.
 
 ## Modulo `cloudfront`
 
@@ -94,6 +97,24 @@ llave KMS, el proveedor OIDC de GitHub (opcional, solo hay uno por cuenta) y los
 `gh-deploy-<env>`. La guia paso a paso, incluida la migracion del estado de `pbkdf2` a KMS, esta
 en `infra/bootstrap/README.md`.
 
+### Techo de permisos de la Lambda
+
+Los roles de deploy pueden crear roles `<project>-<env>*` y ponerles politicas, lo que sin
+control seria una escalada de privilegios. Por eso el bootstrap crea, por ambiente, la politica
+`<project>-<env>-lambda-boundary` (solo logs, DynamoDB sobre las tablas con prefijo, lectura de
+secretos con prefijo y KMS si lo configuras) y exige ese techo en `iam:CreateRole`,
+`PutRolePolicy`, `AttachRolePolicy` y `PutRolePermissionsBoundary`; ademas niega quitarlo o
+cambiar su politica. Consecuencia para los envs:
+
+- Pasa la salida `lambda_boundary_policy_arns["<env>"]` del bootstrap como
+  `permissions_boundary_arn` al modulo `bff` (el ejemplo `examples/complete` lo hace).
+- Si usas `table_name` propio, un `client_secret_arn` creado a mano o `dynamodb_kms_key_arn`,
+  agregalos en el bootstrap (`lambda_extra_table_arns`, `lambda_extra_secret_arns`,
+  `lambda_kms_key_arns`), o el techo los niega y la Lambda no podra usarlos.
+- Si cambias los permisos que el modulo `bff` da a la Lambda, revisa que el techo los cubra.
+
+Detalle y orden de adopcion en `infra/bootstrap/README.md`.
+
 ## Como usan los modulos los repos de envs
 
 El repo privado de envs no copia los modulos: los referencia por commit, de modo que un cambio
@@ -116,6 +137,6 @@ module "cloudfront" {
 - Cada env versiona su `.terraform.lock.hcl`; los modulos no fijan proveedores.
 - Cada env usa su `backend "s3"` (`key = "envs/<env>/terraform.tfstate"`, `use_lockfile = true`) y
   el bloque `encryption` con `aws_kms` y `enforced = true`.
-- El CI de PR corre `tofu fmt -check -recursive`, `tofu validate`, `tflint` y `trivy config` sin
-  credenciales de AWS; `plan` y `apply` usan los roles `gh-deploy-<env>` (environments
-  `<env>-plan` y `<env>`).
+- El CI de PR (`.github/workflows/ci.yml`, job `infra`) corre `tofu fmt -check -recursive`,
+  `tofu validate`, `tflint` y `trivy config` sin credenciales de AWS; `plan` y `apply` usan
+  los roles `gh-deploy-<env>` (environments `<env>-plan` y `<env>`).

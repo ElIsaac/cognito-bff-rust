@@ -14,7 +14,11 @@ module "bff" {
   cognito_user_pool_id = var.cognito_user_pool_id
   extra_callback_urls  = var.extra_callback_urls
   upstream_base_url    = var.upstream_base_url
-  tags                 = var.tags
+
+  # Salida `lambda_boundary_policy_arns` del bootstrap; los roles gh-deploy lo exigen.
+  permissions_boundary_arn = var.permissions_boundary_arn
+
+  tags = var.tags
 }
 
 module "cloudfront" {
