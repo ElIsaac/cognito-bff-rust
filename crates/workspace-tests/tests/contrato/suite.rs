@@ -118,6 +118,7 @@ fn ticket(n: u8, user: UserInfo) -> WsTicket {
         session_hash: SessionId::from_bytes([n.wrapping_add(1); 32]).hash(),
         user,
         created_at: ts(7),
+        auth_time: ts(3),
     }
 }
 

@@ -176,6 +176,12 @@ variable "api_throttle_burst" {
   default     = 100
 }
 
+variable "table_name" {
+  description = "Nombre de la tabla de sesiones; null usa `<name>-sessions`. Util si un techo de permisos del consumidor del boleto WS solo admite ciertos prefijos."
+  type        = string
+  default     = null
+}
+
 variable "dynamodb_kms_key_arn" {
   description = "Llave KMS propia para la tabla; null usa la de AWS."
   type        = string

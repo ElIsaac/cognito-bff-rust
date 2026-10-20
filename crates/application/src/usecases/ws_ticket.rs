@@ -27,6 +27,7 @@ impl<P: Ports> App<P> {
             session_hash: session.id_hash,
             user: session.user,
             created_at: self.ports.clock().now(),
+            auth_time: session.created_at,
         };
         let ttl = self.cfg.ws_ticket.expires_at(ticket.created_at);
         self.ports.tickets().put(&ticket, ttl).await.map_err(internal)?;

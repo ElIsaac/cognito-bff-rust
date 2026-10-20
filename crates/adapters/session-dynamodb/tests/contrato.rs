@@ -14,11 +14,14 @@ use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_dynamodb::types::{
     AttributeDefinition, AttributeValue, BillingMode, KeySchemaElement, KeyType, ScalarAttributeType,
 };
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use domain::{
     AccessToken, Email, GroupName, RefreshToken, Session, SessionId, Subject, Timestamp, TokenSet, UserInfo,
-    Version,
+    Version, WsTicket, WsTicketId,
 };
 use session_dynamodb::{DynamoPending, DynamoSessions, DynamoTickets};
+use sha2::{Digest, Sha256};
 
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
@@ -167,6 +170,45 @@ async fn formato_del_item_de_sesion() {
             "custom:tenant_id".to_owned(),
             s("t1")
         )])))
+    );
+    tabla.borrar().await;
+}
+
+/// Contrato con el servicio de WebSocket del POS (decision 53): la clave se calcula aqui sin
+/// `domain`, tal como la calcula el consumidor.
+#[tokio::test]
+async fn formato_del_item_de_boleto() {
+    let tabla = Tabla::nueva().await;
+    let repo = DynamoTickets::new(tabla.client.clone(), &tabla.name);
+    let crudo = [7u8; 32];
+    let id = WsTicketId::from_bytes(crudo);
+    let s0 = session();
+    let t = WsTicket {
+        id_hash: id.hash(),
+        session_hash: s0.id_hash.clone(),
+        user: s0.user.clone(),
+        created_at: Timestamp::from_secs(200),
+        auth_time: Timestamp::from_secs(1),
+    };
+    repo.put(&t, Timestamp::from_secs(230)).await.unwrap();
+
+    // El navegador presenta `id.expose_secret()`; el consumidor decodifica y hashea los bytes.
+    let presentado = URL_SAFE_NO_PAD.decode(id.expose_secret()).unwrap();
+    assert_eq!(presentado, crudo);
+    let pk = format!("WSTICKET#{}", URL_SAFE_NO_PAD.encode(Sha256::digest(&presentado)));
+    let item = tabla.raw(&pk).await.expect("item del boleto");
+    assert_eq!(item.get("session_hash"), Some(&s(s0.id_hash.as_str())));
+    assert_eq!(item.get("created_at"), Some(&n(200)));
+    assert_eq!(item.get("auth_time"), Some(&n(1)));
+    assert_eq!(item.get("ttl"), Some(&n(230)));
+    let Some(AttributeValue::M(user)) = item.get("user") else {
+        panic!("user debe ser M");
+    };
+    assert_eq!(user.get("sub"), Some(&s("sub-1")));
+    assert_eq!(user.get("email"), Some(&s("a@b.com")));
+    assert_eq!(user.get("groups"), Some(&AttributeValue::L(vec![s("dueno")])));
+    assert!(
+        matches!(user.get("attributes"), Some(AttributeValue::M(m)) if m.get("custom:tenant_id") == Some(&s("t1")))
     );
     tabla.borrar().await;
 }

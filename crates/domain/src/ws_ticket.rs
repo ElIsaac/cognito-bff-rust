@@ -18,6 +18,9 @@ pub struct WsTicket {
     pub session_hash: IdHash,
     pub user: UserInfo,
     pub created_at: Timestamp,
+    /// Hora de login de la sesion (su `created_at`): el servicio de WebSocket la compara con
+    /// sus propias marcas de sesion cerrada (decision 53).
+    pub auth_time: Timestamp,
 }
 
 const WS_TICKET_MAX_TTL: Duration = Duration::from_mins(2);
@@ -73,6 +76,7 @@ mod tests {
             session_hash: SessionId::from_bytes([6; RANDOM_ID_BYTES]).hash(),
             user: UserInfo::new(Subject::new("s".into()).unwrap(), None, None, vec![]),
             created_at: Timestamp::from_secs(100),
+            auth_time: Timestamp::from_secs(50),
         };
         let p = WsTicketPolicy::default();
         assert!(!p.is_expired(&t, Timestamp::from_secs(129)));

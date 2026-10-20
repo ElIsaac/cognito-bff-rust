@@ -8,6 +8,7 @@ locals {
     var.origin_verify_enabled ? aws_secretsmanager_secret.origin_verify[0].arn : "",
   ])
   log_group_name = "/aws/lambda/${var.name}"
+  table_name     = coalesce(var.table_name, "${var.name}-sessions")
   callback_url   = "${var.public_origin}/auth/callback"
 }
 
@@ -16,7 +17,7 @@ locals {
 # ---------------------------------------------------------------------------------------
 
 resource "aws_dynamodb_table" "sessions" {
-  name                        = "${var.name}-sessions"
+  name                        = local.table_name
   billing_mode                = "PAY_PER_REQUEST"
   hash_key                    = "pk"
   deletion_protection_enabled = var.dynamodb_deletion_protection

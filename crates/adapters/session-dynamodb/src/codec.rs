@@ -148,6 +148,7 @@ pub(crate) fn ticket_from(item: &Item) -> Result<WsTicket, Malformed> {
         session_hash: IdHash::from_stored(s(item, "session_hash")?.to_owned()),
         user: user_from(item)?,
         created_at: ts(item, "created_at")?,
+        auth_time: ts(item, "auth_time")?,
     })
 }
 
@@ -223,6 +224,7 @@ pub(crate) fn ticket_to(prefix: &str, t: &WsTicket, ttl: Timestamp) -> Item {
     item.insert("session_hash".to_owned(), text(t.session_hash.as_str()));
     item.insert("user".to_owned(), user_to(&t.user));
     item.insert("created_at".to_owned(), num(t.created_at.as_secs()));
+    item.insert("auth_time".to_owned(), num(t.auth_time.as_secs()));
     item.insert(TTL.to_owned(), num(ttl.as_secs()));
     item
 }
