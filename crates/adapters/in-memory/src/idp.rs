@@ -50,6 +50,8 @@ struct State {
     access_ttl: Duration,
     refresh_latency: Duration,
     rotate: bool,
+    /// Claims del ID token que devuelve cada refresh (`None`: no viene ID token).
+    refresh_user: Option<UserInfo>,
     scripted_failures: VecDeque<IdpError>,
     revoked: Vec<String>,
 }
@@ -77,6 +79,7 @@ impl FakeIdp {
                 access_ttl: DEFAULT_ACCESS_TTL,
                 refresh_latency: Duration::ZERO,
                 rotate: false,
+                refresh_user: None,
                 scripted_failures: VecDeque::new(),
                 revoked: Vec::new(),
             }),
@@ -139,6 +142,11 @@ impl FakeIdp {
     /// Latencia (reloj de prueba) de cada `refresh`.
     pub fn set_refresh_latency(&self, d: Duration) {
         lock(&self.state).refresh_latency = d;
+    }
+
+    /// Los refresh devuelven un ID token con estos claims (por omision, ninguno).
+    pub fn set_refresh_user(&self, user: Option<UserInfo>) {
+        lock(&self.state).refresh_user = user;
     }
 
     /// Con `true`, cada refresh devuelve un refresh token nuevo e invalida el anterior.
@@ -251,6 +259,7 @@ impl IdentityProvider for FakeIdp {
         }
         let access_ttl = st.access_ttl;
         let rotate = st.rotate;
+        let user = st.refresh_user.clone();
         let Some(record) = st.refresh_tokens.get_mut(refresh.expose_secret()) else {
             return Err(IdpError::InvalidGrant);
         };
@@ -277,7 +286,7 @@ impl IdentityProvider for FakeIdp {
             access,
             refresh: rotated,
             access_expires_in: access_ttl,
-            user: None,
+            user,
         })
     }
 

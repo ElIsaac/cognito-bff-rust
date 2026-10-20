@@ -37,7 +37,17 @@ const RESPONSE_DENY: &[&str] = &[
     "access-control-allow-headers",
     "access-control-allow-methods",
     "access-control-expose-headers",
+    // El BFF fija `no-store` en todo `/api/*`; lo que diga el upstream no cuenta.
+    "cache-control",
+    "expires",
+    "pragma",
+    // Delatan la infraestructura detras del BFF.
+    "server",
+    "apigw-requestid",
 ];
+
+/// Prefijo de las cabeceras internas de AWS (`x-amzn-requestid`, `x-amzn-trace-id`, ...).
+const RESPONSE_DENY_PREFIX: &str = "x-amzn-";
 
 /// Hay valores con controles (CR/LF) que no deben reenviarse.
 fn clean_value(v: &str) -> bool {
@@ -55,12 +65,29 @@ pub fn request_allowlist(headers: &[Header]) -> Vec<Header> {
         .collect()
 }
 
+/// Nombres (en minusculas) que el upstream declaro hop-by-hop en `Connection`.
+fn connection_tokens(headers: &[Header]) -> Vec<String> {
+    headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("connection"))
+        .flat_map(|(_, v)| v.split(','))
+        .map(|t| t.trim().to_ascii_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
 /// Quita del upstream lo que no debe llegar al navegador.
 pub fn response_filter(headers: &[Header]) -> Vec<Header> {
+    let named = connection_tokens(headers);
     headers
         .iter()
         .map(|(k, v)| (k.to_ascii_lowercase(), v))
-        .filter(|(k, v)| !RESPONSE_DENY.contains(&k.as_str()) && clean_value(v))
+        .filter(|(k, v)| {
+            !RESPONSE_DENY.contains(&k.as_str())
+                && !k.starts_with(RESPONSE_DENY_PREFIX)
+                && !named.contains(k)
+                && clean_value(v)
+        })
         .map(|(k, v)| (k, v.clone()))
         .collect()
 }
@@ -100,6 +127,37 @@ mod tests {
                 ("traceparent", "00-abc-def-01")
             ])
         );
+    }
+
+    #[test]
+    fn respuesta_sin_cache_ni_cabeceras_internas() {
+        let entrada = h(&[
+            ("Cache-Control", "public, max-age=3600"),
+            ("expires", "Wed, 21 Oct 2026 07:28:00 GMT"),
+            ("pragma", "cache"),
+            ("server", "Kestrel"),
+            ("x-amzn-RequestId", "abc"),
+            ("x-amzn-trace-id", "Root=1"),
+            ("apigw-requestid", "xyz="),
+            ("x-amz-cf-id", "se-queda"),
+            ("etag", "\"1\""),
+        ]);
+        assert_eq!(
+            response_filter(&entrada),
+            h(&[("x-amz-cf-id", "se-queda"), ("etag", "\"1\"")])
+        );
+    }
+
+    #[test]
+    fn respuesta_sin_las_cabeceras_que_nombra_connection() {
+        let entrada = h(&[
+            ("Connection", "close, X-Interna , "),
+            ("connection", "x-otra"),
+            ("x-interna", "1"),
+            ("x-otra", "2"),
+            ("x-publica", "3"),
+        ]);
+        assert_eq!(response_filter(&entrada), h(&[("x-publica", "3")]));
     }
 
     #[test]

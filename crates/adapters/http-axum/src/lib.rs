@@ -7,6 +7,7 @@
 mod cookies;
 mod errors;
 mod middleware;
+mod origin;
 mod routes;
 
 #[cfg(feature = "fuzzing")]
@@ -14,6 +15,7 @@ mod routes;
 pub mod fuzzing;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use application::App;
 use application::ports::{Ports, SecretProvider};
@@ -32,6 +34,8 @@ pub struct HttpConfig {
     pub auth_error_path: String,
     /// Nombre o ARN del secreto de `X-Origin-Verify`; `None` lo desactiva.
     pub origin_verify_secret: Option<String>,
+    /// Cuanto vale el valor anterior (`AWSPREVIOUS`) desde que se vio el actual.
+    pub origin_verify_previous_grace: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -62,6 +66,7 @@ pub(crate) struct Shared<P: Ports, S> {
     pub app: App<P>,
     pub cfg: HttpConfig,
     pub secrets: Arc<S>,
+    pub origin: origin::OriginVerify,
 }
 
 pub(crate) type St<P, S> = Arc<Shared<P, S>>;
@@ -76,7 +81,13 @@ where
     S: SecretProvider + 'static,
 {
     cfg.validate()?;
-    let state: St<P, S> = Arc::new(Shared { app, cfg, secrets });
+    let origin = origin::OriginVerify::new(cfg.origin_verify_previous_grace);
+    let state: St<P, S> = Arc::new(Shared {
+        app,
+        cfg,
+        secrets,
+        origin,
+    });
     let routes = Router::new()
         .route("/auth/login", get(routes::auth::login::<P, S>))
         .route("/auth/callback", get(routes::auth::callback::<P, S>))
@@ -128,6 +139,7 @@ mod tests {
             session_cookie: "__Host-bff_session".into(),
             auth_error_path: "/".into(),
             origin_verify_secret: None,
+            origin_verify_previous_grace: Duration::from_mins(15),
         }
     }
 

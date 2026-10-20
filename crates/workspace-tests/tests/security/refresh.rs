@@ -187,6 +187,46 @@ async fn invalid_grant_borra_la_sesion_con_una_sola_llamada() {
     );
 }
 
+/// Un ID token refrescado de otro usuario (`sub` distinto) se trata como rechazado: la
+/// sesion se destruye, no se guardan los tokens nuevos y no se vuelve a llamar al IdP.
+#[tokio::test(start_paused = true)]
+async fn refresh_con_otro_sub_destruye_la_sesion() {
+    let env = Env::new();
+    let cookie = login_a_punto_de_vencer(&env).await;
+    let otro = domain::UserInfo::new(
+        domain::Subject::new("usuario-ajeno".to_owned()).unwrap(),
+        None,
+        None,
+        vec![],
+    );
+    env.ports.idp().set_refresh_user(Some(otro));
+
+    let r = env.app.ensure_fresh_session(Some(&cookie)).await;
+    assert_eq!(r.unwrap_err(), AppError::Unauthorized);
+    assert_eq!(env.ports.idp().refresh_calls(), 1);
+    assert!(env.ports.sessions().is_empty());
+    let r = env.app.ensure_fresh_session(Some(&cookie)).await;
+    assert_eq!(r.unwrap_err(), AppError::Unauthorized);
+    assert_eq!(env.ports.idp().refresh_calls(), 1);
+}
+
+/// El mismo `sub` en el ID token refrescado si actualiza los claims de la sesion.
+#[tokio::test(start_paused = true)]
+async fn refresh_con_el_mismo_sub_actualiza_los_claims() {
+    let env = Env::new();
+    let cookie = login_a_punto_de_vencer(&env).await;
+    let nuevo = domain::UserInfo::new(
+        domain::Subject::new("user-1".to_owned()).unwrap(),
+        None,
+        Some("Ana Maria".to_owned()),
+        vec![],
+    );
+    env.ports.idp().set_refresh_user(Some(nuevo));
+    let s = env.app.ensure_fresh_session(Some(&cookie)).await.unwrap();
+    assert_eq!(s.user.name(), Some("Ana Maria"));
+    assert_eq!(stored(&env, &cookie).user.name(), Some("Ana Maria"));
+}
+
 /// Refresh token revocado en el IdP (p. ej. "cerrar sesion en todos lados"): mismo
 /// resultado, de forma natural y no por un fallo programado.
 #[tokio::test(start_paused = true)]

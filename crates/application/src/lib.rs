@@ -21,6 +21,12 @@ pub use usecases::ws_ticket::IssuedWsTicket;
 
 use ports::Ports;
 
+/// Deja en el span de la peticion la huella del `sub` (nunca el `sub`) una vez resuelta la
+/// sesion. El campo `sub_hash` lo declara la capa HTTP al crear el span.
+pub(crate) fn record_sub(user: &domain::UserInfo) {
+    tracing::Span::current().record("sub_hash", user.sub().log_hash());
+}
+
 /// Punto de entrada de la capa de aplicacion. Barato de clonar.
 #[derive(Debug)]
 pub struct App<P: Ports> {

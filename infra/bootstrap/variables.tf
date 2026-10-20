@@ -83,9 +83,13 @@ variable "spa_bucket_arns" {
 }
 
 variable "cognito_user_pool_arns" {
-  description = "User pools donde los roles pueden crear el app client del BFF. Vacio = cualquier pool de la cuenta y la region."
+  description = "User pools donde los roles pueden crear el app client del BFF. Obligatorio: sin la lista, un rol de deploy podria tocar el app client de cualquier pool de la cuenta."
   type        = list(string)
-  default     = []
+
+  validation {
+    condition     = length(var.cognito_user_pool_arns) > 0 && alltrue([for a in var.cognito_user_pool_arns : can(regex("^arn:aws[a-z-]*:cognito-idp:[a-z0-9-]+:[0-9]{12}:userpool/[A-Za-z0-9_-]+$", a))])
+    error_message = "Al menos un ARN de user pool (`arn:aws:cognito-idp:<region>:<cuenta>:userpool/<id>`); sin comodines."
+  }
 }
 
 variable "lambda_extra_table_arns" {

@@ -34,7 +34,10 @@ impl<P: Ports> App<P> {
 
         for attempt in 0..retry.max_attempts {
             match self.try_fresh(&hash).await? {
-                Step::Done(s) => return Ok(*s),
+                Step::Done(s) => {
+                    crate::record_sub(&s.user);
+                    return Ok(*s);
+                }
                 Step::Retry => self.backoff(attempt).await,
             }
         }
@@ -111,19 +114,13 @@ impl<P: Ports> App<P> {
         };
 
         match self.ports.idp().refresh(&s.tokens.refresh).await {
-            Ok(grant) => self.store_refreshed(s, leased, grant).await,
-            Err(IdpError::InvalidGrant | IdpError::TokenRejected) => {
-                // Si nuestro lease caduco durante una llamada lenta, otra invocacion pudo
-                // refrescar (y rotar) con el mismo token: eso no es una revocacion.
-                let current = sessions.get(&s.id_hash).await.map_err(internal)?;
-                if current.is_some_and(|c| c.version != leased) {
-                    tracing::warn!("refresh rechazado tras perder el lease: se reintenta");
-                    return Ok(Step::Retry);
-                }
-                tracing::info!("refresh rechazado por el proveedor: se cierra la sesion");
-                sessions.delete(&s.id_hash).await.map_err(internal)?;
-                Err(AppError::Unauthorized)
+            // Un ID token de otro usuario es tan invalido como uno con mala firma.
+            Ok(grant) if grant.user.as_ref().is_some_and(|u| u.sub() != s.user.sub()) => {
+                tracing::warn!("refresh con un sub distinto al de la sesion");
+                self.reject_refresh(&s, leased).await
             }
+            Ok(grant) => self.store_refreshed(s, leased, grant).await,
+            Err(IdpError::InvalidGrant | IdpError::TokenRejected) => self.reject_refresh(&s, leased).await,
             Err(IdpError::Adapter(e)) => {
                 tracing::warn!(error = %e, "refresh fallido: se libera el lease");
                 self.release_lease(&s, leased).await;
@@ -138,6 +135,20 @@ impl<P: Ports> App<P> {
                 }
             }
         }
+    }
+
+    async fn reject_refresh(&self, s: &Session, leased: domain::Version) -> Result<Step, AppError> {
+        let sessions = self.ports.sessions();
+        // Si nuestro lease caduco durante una llamada lenta, otra invocacion pudo
+        // refrescar (y rotar) con el mismo token: eso no es una revocacion.
+        let current = sessions.get(&s.id_hash).await.map_err(internal)?;
+        if current.is_some_and(|c| c.version != leased) {
+            tracing::warn!("refresh rechazado tras perder el lease: se reintenta");
+            return Ok(Step::Retry);
+        }
+        tracing::info!("refresh rechazado por el proveedor: se cierra la sesion");
+        sessions.delete(&s.id_hash).await.map_err(internal)?;
+        Err(AppError::Unauthorized)
     }
 
     async fn store_refreshed(

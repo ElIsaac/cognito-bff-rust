@@ -17,6 +17,11 @@ use crate::system::{OsRng, SystemClock};
 pub enum BuildError {
     #[error("Cognito no disponible al arrancar")]
     Idp(AdapterError),
+    #[error("no se pudo leer el secreto {name} al arrancar")]
+    Secret {
+        name: &'static str,
+        source: AdapterError,
+    },
     #[error("{0}")]
     Upstream(#[from] upstream_reqwest::ConfigError),
     #[error("{0}")]
@@ -92,16 +97,37 @@ impl<S: SecretProvider + 'static> Ports for BffPorts<S> {
     }
 }
 
+/// Lee un secreto antes de atender trafico: un permiso o un nombre equivocado falla el
+/// arranque (y se ve en el despliegue) en vez de la primera peticion.
+async fn preload<S: SecretProvider>(secrets: &S, name: &'static str, id: &str) -> Result<(), BuildError> {
+    secrets
+        .get(id)
+        .await
+        .map(|_| ())
+        .map_err(|source| BuildError::Secret { name, source })
+}
+
 /// Router listo para `lambda_http::run` (o para `axum::serve` en local).
 ///
 /// # Errors
-/// `BuildError` si Cognito no responde al descargar el JWKS o la configuracion de un
-/// adaptador no es valida.
+/// `BuildError` si no se puede leer el secreto del cliente o el de `X-Origin-Verify`, si
+/// Cognito no responde al descargar el JWKS o si la configuracion de un adaptador no es
+/// valida.
 pub async fn build<S: SecretProvider + 'static>(
     cfg: Config,
     secrets: Arc<S>,
     sdk: &aws_config::SdkConfig,
 ) -> Result<axum::Router, BuildError> {
+    preload(
+        &*secrets,
+        "COGNITO_CLIENT_SECRET_ARN",
+        &cfg.cognito.client_secret_name,
+    )
+    .await?;
+    if let Some(name) = &cfg.http.origin_verify_secret {
+        preload(&*secrets, "ORIGIN_VERIFY_SECRET_ARN", name).await?;
+    }
+
     let mut ddb = aws_sdk_dynamodb::config::Builder::from(sdk);
     if let Some(endpoint) = &cfg.dynamodb_endpoint {
         ddb = ddb.endpoint_url(endpoint);
@@ -125,4 +151,53 @@ pub async fn build<S: SecretProvider + 'static>(
     };
     let app = App::new(Arc::new(ports), cfg.app);
     Ok(http_axum::router(app, cfg.http, secrets)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use application::ports::SecretValue;
+
+    struct Secretos(Result<(), AdapterError>);
+
+    // Sincrono por dentro, como `EnvSecretProvider`.
+    #[allow(clippy::unused_async_trait_impl)]
+    impl SecretProvider for Secretos {
+        async fn get(&self, _: &str) -> Result<SecretVersions, AdapterError> {
+            self.0.map(|()| SecretVersions {
+                current: SecretValue::new("valor".to_owned()),
+                previous: None,
+            })
+        }
+
+        fn invalidate(&self, _: &str) {}
+    }
+
+    #[tokio::test]
+    async fn precarga_ok_y_error_nombra_la_variable() {
+        assert!(
+            preload(&Secretos(Ok(())), "COGNITO_CLIENT_SECRET_ARN", "x")
+                .await
+                .is_ok()
+        );
+        let e = preload(
+            &Secretos(Err(AdapterError::Permanent)),
+            "ORIGIN_VERIFY_SECRET_ARN",
+            "x",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            e,
+            BuildError::Secret {
+                name: "ORIGIN_VERIFY_SECRET_ARN",
+                source: AdapterError::Permanent
+            }
+        ));
+        let msg = e.to_string();
+        assert!(
+            msg.contains("ORIGIN_VERIFY_SECRET_ARN") && !msg.contains("valor"),
+            "{msg}"
+        );
+    }
 }

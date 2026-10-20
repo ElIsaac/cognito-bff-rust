@@ -3,6 +3,7 @@
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use application::ports::{AdapterError, IdpError, Method, UpstreamError};
 use application::{CallbackParams, ProxyCall, StartLoginOutcome};
@@ -177,6 +178,7 @@ async fn tracing_no_contiene_secretos_en_ningun_flujo() {
         query: Some("q=1"),
         headers: &headers,
         body: Vec::new(),
+        started: env.ports.clock().elapsed(),
     };
     env.app.proxy(llamada("orders")).await.unwrap();
     env.app.proxy(llamada("../auth/me")).await.unwrap_err();
@@ -257,6 +259,11 @@ async fn tracing_no_contiene_secretos_en_ningun_flujo() {
     assert!(lineas.iter().any(|l| l.contains("login completado")));
     assert!(lineas.iter().any(|l| l.contains("logout")));
     assert_sin_secretos(&lineas, &secretos);
+    // El `sub` (6 caracteres, demasiado corto para `Secretos`) nunca sale en claro.
+    let sub = user().sub().as_str().to_owned();
+    if let Some(l) = lineas.iter().find(|l| l.contains(&sub)) {
+        panic!("fuga del sub en tracing: {l}");
+    }
 }
 
 /// Un test de control del propio detector: si un secreto se registrara, se detectaria.
@@ -416,6 +423,7 @@ fn debug_de_proxy_call_no_imprime_la_cookie_de_sesion() {
         query: None,
         headers: &headers,
         body: Vec::new(),
+        started: Duration::ZERO,
     };
     let texto = format!("{call:?}");
     assert!(!texto.contains("secreto"), "{texto}");

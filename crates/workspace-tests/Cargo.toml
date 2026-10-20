@@ -21,6 +21,7 @@ session-dynamodb = { path = "../adapters/session-dynamodb" }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "test-util"] }
 tower = { version = "0.5.3", default-features = false, features = ["util"] }
 tracing.workspace = true
+tracing-core = "0.1.36"
 
 [lints]
 workspace = true

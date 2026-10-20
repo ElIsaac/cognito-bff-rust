@@ -1,8 +1,13 @@
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
+
+use sha2::{Digest, Sha256};
 
 use crate::DomainError;
 
 const SUBJECT_MAX_LEN: usize = 128;
+/// Bytes del sha256 del `sub` que se dejan en los logs.
+const LOG_HASH_BYTES: usize = 8;
 const EMAIL_MAX_LEN: usize = 254;
 const GROUP_MAX_LEN: usize = 128;
 const NAME_MAX_LEN: usize = 256;
@@ -32,6 +37,17 @@ impl Subject {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Huella para los logs: los primeros 8 bytes del sha256 del `sub`, en hexadecimal.
+    pub fn log_hash(&self) -> String {
+        Sha256::digest(self.0.as_bytes())
+            .iter()
+            .take(LOG_HASH_BYTES)
+            .fold(String::with_capacity(2 * LOG_HASH_BYTES), |mut s, b| {
+                let _ = write!(s, "{b:02x}");
+                s
+            })
     }
 }
 
@@ -168,6 +184,16 @@ mod tests {
         assert!(GroupName::new("dueno".into()).is_ok());
         assert!(GroupName::new("a\u{0}".into()).is_err());
         assert!(GroupName::new("x".repeat(129)).is_err());
+    }
+
+    #[test]
+    fn huella_del_sub_para_logs() {
+        // sha256("abc") = ba7816bf 8f01cfea ...
+        let h = Subject::new("abc".into()).unwrap().log_hash();
+        assert_eq!(h, "ba7816bf8f01cfea");
+        assert!(!h.contains("abc"));
+        let otro = Subject::new("abd".into()).unwrap().log_hash();
+        assert_ne!(h, otro);
     }
 
     #[test]

@@ -82,8 +82,20 @@ variable "logging_bucket" {
   default     = null
 }
 
+variable "project" {
+  description = "Valor de la etiqueta `Project`, con la que los roles `gh-deploy-<env>` acotan sus permisos sobre la distribucion (debe coincidir con `project` de `infra/bootstrap`). Null = `name` sin su ultimo segmento (`cognito-bff` para `cognito-bff-dev`)."
+  type        = string
+  default     = null
+}
+
+variable "env" {
+  description = "Valor de la etiqueta `Env` (uno de `envs` de `infra/bootstrap`). Null = ultimo segmento de `name` (`dev` para `cognito-bff-dev`)."
+  type        = string
+  default     = null
+}
+
 variable "tags" {
-  description = "Etiquetas de todos los recursos que las admiten."
+  description = "Etiquetas de todos los recursos que las admiten; `Project` y `Env` se agregan siempre."
   type        = map(string)
   default     = {}
 }

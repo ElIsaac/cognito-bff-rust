@@ -1,13 +1,13 @@
 //! `ANY /api/*` (§6.5).
 
-use application::ports::{Ports, SecretProvider};
+use application::ports::{Clock, Ports, SecretProvider};
 use application::{AppError, ProxyCall};
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum::response::Response;
 
-use crate::middleware::{header_pairs, method_of};
+use crate::middleware::{RequestStart, header_pairs, method_of};
 use crate::{ApiError, St, cookies};
 
 pub(crate) async fn forward<P: Ports, S: SecretProvider>(
@@ -32,6 +32,10 @@ pub(crate) async fn forward<P: Ports, S: SecretProvider>(
         .map_err(|_| AppError::PayloadTooLarge)?;
     let headers = header_pairs(&parts.headers);
     let cookie = cookies::read(&parts.headers, &st.cfg.session_cookie);
+    let started = parts
+        .extensions
+        .get::<RequestStart>()
+        .map_or_else(|| st.app.ports().clock().monotonic(), |s| s.0);
 
     let up = st
         .app
@@ -42,13 +46,15 @@ pub(crate) async fn forward<P: Ports, S: SecretProvider>(
             query: parts.uri.query(),
             headers: &headers,
             body: body.to_vec(),
+            started,
         })
         .await?;
 
     let status = StatusCode::from_u16(up.status).map_err(|_| AppError::UpstreamUnavailable)?;
     let mut resp = Response::new(Body::from(up.body));
     *resp.status_mut() = status;
-    // Ya filtradas por `response_filter` (sin `Set-Cookie` ni hop-by-hop).
+    // Ya filtradas por `response_filter` (sin `Set-Cookie`, hop-by-hop ni cache); el
+    // `no-store` lo fija el middleware de contexto.
     for (k, v) in up.headers {
         if let (Ok(name), Ok(value)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(&v)) {
             resp.headers_mut().append(name, value);

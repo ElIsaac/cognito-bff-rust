@@ -119,7 +119,7 @@ arrancar: un valor invalido falla de inmediato y el error nombra la variable, nu
 
 | Variable | Por defecto | Descripcion |
 |---|---|---|
-| `PUBLIC_ORIGIN` | requerida | `https://app.example.com`, sin barra final; `http` solo para `localhost`. |
+| `PUBLIC_ORIGIN` | requerida | `https://app.example.com`, sin barra final; `http` solo para `localhost`. Se normaliza al origen serializado (host en minusculas, sin `:443`), que es lo que el navegador manda en `Origin`. |
 | `COGNITO_ISSUER` | requerida | `https://cognito-idp.<region>.amazonaws.com/<poolId>` |
 | `COGNITO_DOMAIN` | requerida | Dominio del Hosted UI / Managed Login, con `https://`. |
 | `COGNITO_CLIENT_ID` | requerida | App client confidencial. |
@@ -127,7 +127,8 @@ arrancar: un valor invalido falla de inmediato y el error nombra la variable, nu
 | `OIDC_SCOPES` | `openid email profile` | |
 | `SESSIONS_TABLE` | requerida | Tabla DynamoDB (`pk` string, TTL en el atributo `ttl`). |
 | `UPSTREAM_BASE_URL` | requerida | Tu API, sin barra final. |
-| `ORIGIN_VERIFY_SECRET_ARN` | vacio | Secreto de `X-Origin-Verify`; vacio = desactivado. |
+| `ORIGIN_VERIFY_SECRET_ARN` | vacio | Secreto de `X-Origin-Verify`; vacio = desactivado. Si el valor no coincide, el secreto se recarga una vez (como mucho cada 30 s) antes de responder `403`. |
+| `ORIGIN_VERIFY_PREVIOUS_GRACE_SECS` | `900` | Cuanto vale el valor anterior (`AWSPREVIOUS`) desde que el BFF ve el actual. |
 | `COOKIE_NAME` | `__Host-bff_session` | Debe empezar por `__Host-`. |
 | `CSRF_HEADER_NAME` | `X-Requested-With` | |
 | `SESSION_ABSOLUTE_TTL_SECS` | `2592000` (30 d) | Vida maxima; no la pongas por encima de la validez del refresh token en Cognito. |
@@ -137,7 +138,8 @@ arrancar: un valor invalido falla de inmediato y el error nombra la variable, nu
 | `IDP_TIMEOUT_SECS` | `4` | Timeout HTTP hacia Cognito; debe ser menor que `REFRESH_LEASE_SECS`. |
 | `PENDING_TTL_SECS` | `600` | Vida del login en curso. |
 | `PROXY_MAX_BODY_BYTES` | `1048576` | Tope del cuerpo del proxy; tope duro de 5 MiB. |
-| `PROXY_TIMEOUT_SECS` | `10` | |
+| `PROXY_TIMEOUT_SECS` | `10` | Timeout del upstream; rige el menor entre este y lo que quede de `REQUEST_BUDGET_SECS`. |
+| `REQUEST_BUDGET_SECS` | `14` | Presupuesto total de una peticion a `/api/*`, contado desde que entra; un refresh lento lo consume. Con el modulo `bff` vale `lambda_timeout_secs - 1`. |
 | `JWKS_CACHE_TTL_SECS` | `3600` | |
 | `SECRET_CACHE_TTL_SECS` | `600` | |
 | `LOGOUT_REDIRECT_PATH` | `/` | Ruta local a la que vuelve Cognito tras el logout. |
@@ -145,6 +147,9 @@ arrancar: un valor invalido falla de inmediato y el error nombra la variable, nu
 | `EXPOSED_CLAIMS` | vacio | Claims extra de `/auth/me`, separados por coma (p. ej. `custom:tenant_id`). |
 | `WS_TICKET_TTL_SECS` | `30` | Vida del boleto de WebSocket (maximo 120). |
 | `RUST_LOG` | `info` | Filtro de `tracing`; los logs salen en JSON. |
+
+El arranque lee `COGNITO_CLIENT_SECRET_ARN` y `ORIGIN_VERIFY_SECRET_ARN` (si esta): un permiso o un
+nombre equivocado impide arrancar, en vez de fallar en la primera peticion.
 
 Solo con `--features local`: `DYNAMODB_ENDPOINT_URL` (DynamoDB Local), `COGNITO_CLIENT_SECRET` y
 `ORIGIN_VERIFY_SECRET` (los secretos en claro, sin Secrets Manager) y `LOCAL_ADDR` (por omision

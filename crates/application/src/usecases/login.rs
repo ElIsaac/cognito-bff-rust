@@ -190,6 +190,7 @@ impl<P: Ports> App<P> {
             LoginError::Internal
         })?;
 
+        crate::record_sub(&session.user);
         tracing::info!("login completado");
         Ok(CompletedLogin {
             session_id,

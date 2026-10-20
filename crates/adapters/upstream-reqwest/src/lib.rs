@@ -3,7 +3,8 @@
 //! - Destino: `UPSTREAM_BASE_URL` (https, sin barra final) + `/` + `ProxyPath` + `?query`.
 //! - Cabeceras: solo las recibidas (ya filtradas por `application`) mas
 //!   `authorization: Bearer <access>`; una `authorization` recibida se descarta.
-//! - Timeout total (conexion, cabeceras y cuerpo) configurable; sin redirecciones; sin
+//! - Timeout total (conexion, cabeceras y cuerpo) configurable; si la peticion trae un tope
+//!   propio (lo que queda de su presupuesto) rige el menor de los dos; sin redirecciones; sin
 //!   proxy de entorno; cuerpo de la respuesta leido en streaming con tope.
 //! - Una respuesta HTTP (incluidas 3xx, 4xx y 5xx del upstream) se devuelve tal cual; solo
 //!   los fallos de red, el timeout y el exceso de tamano son `UpstreamError`.
@@ -70,6 +71,7 @@ impl UpstreamConfig {
 pub struct ReqwestUpstream {
     client: reqwest::Client,
     base: String,
+    timeout: Duration,
     max_response_bytes: usize,
 }
 
@@ -110,6 +112,7 @@ impl ReqwestUpstream {
         Ok(Self {
             client,
             base: config.base_url,
+            timeout: config.timeout,
             max_response_bytes: config.max_response_bytes,
         })
     }
@@ -178,7 +181,12 @@ impl UpstreamApi for ReqwestUpstream {
     async fn forward(&self, req: UpstreamRequest) -> Result<UpstreamResponse, UpstreamError> {
         let url = self.url_for(&req);
         let headers = request_headers(&req)?;
-        let mut builder = self.client.request(to_method(req.method), url).headers(headers);
+        let timeout = req.timeout.map_or(self.timeout, |t| t.min(self.timeout));
+        let mut builder = self
+            .client
+            .request(to_method(req.method), url)
+            .headers(headers)
+            .timeout(timeout);
         if !req.body.is_empty() {
             builder = builder.body(req.body);
         } else if matches!(req.method, Method::Post | Method::Put | Method::Patch) {

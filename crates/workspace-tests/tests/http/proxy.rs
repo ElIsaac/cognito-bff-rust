@@ -251,10 +251,73 @@ async fn set_cookie_del_upstream_se_elimina() {
     // `content-length` lo recalcula el router a partir del cuerpo; el del upstream se descarta.
     assert_eq!(
         nombres,
-        ["content-length", "content-type", "etag", "x-request-id"]
+        [
+            "cache-control",
+            "content-length",
+            "content-type",
+            "etag",
+            "x-request-id"
+        ]
     );
+    assert_eq!(r.header("cache-control"), Some("no-store"));
     assert_eq!(r.header("content-length"), Some("11"));
     assert_eq!(r.header("etag"), Some("\"abc\""));
+}
+
+/// Dec. 8: todo `/api/*` sale con `Cache-Control: no-store`, venga lo que venga del upstream,
+/// y sin las cabeceras internas ni las que el upstream declara en `Connection`.
+#[tokio::test(start_paused = true)]
+async fn api_siempre_sale_con_no_store() {
+    let env = Env::con_origen();
+    let id = env.sesion().await;
+    env.ports.upstream().respond_with(UpstreamResponse {
+        status: 200,
+        headers: vec![
+            h("cache-control", "public, max-age=31536000, immutable"),
+            h("Expires", "Thu, 01 Jan 2099 00:00:00 GMT"),
+            h("pragma", "cache"),
+            h("server", "Kestrel"),
+            h("x-amzn-requestid", "abc"),
+            h("x-amzn-trace-id", "Root=1-abc"),
+            h("apigw-requestid", "Zx="),
+            h("connection", "x-interna"),
+            h("x-interna", "1"),
+            h("content-type", "application/json"),
+        ],
+        body: b"{}".to_vec(),
+    });
+    let r = env.send(Req::get("/api/orders").sesion(&id)).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.header("cache-control"), Some("no-store"));
+    assert_eq!(r.headers.get_all("cache-control").iter().count(), 1);
+    for prohibida in [
+        "expires",
+        "pragma",
+        "server",
+        "x-amzn-requestid",
+        "x-amzn-trace-id",
+        "apigw-requestid",
+        "connection",
+        "x-interna",
+    ] {
+        assert!(r.header(prohibida).is_none(), "{prohibida}");
+    }
+    assert_eq!(r.header("content-type"), Some("application/json"));
+
+    // Tambien las respuestas que no vienen del upstream.
+    let casos = [
+        env.send(Req::get("/api/orders")).await,
+        env.send(Req::get("/api/orders").sin_verify().sesion(&id)).await,
+        env.send(Req::get("/api/").sesion(&id)).await,
+        env.send(Req::get("/api/%2e%2e/x").sesion(&id)).await,
+        env.send(Req::post("/api/orders").sesion(&id)).await,
+    ];
+    for r in casos {
+        assert_eq!(r.header("cache-control"), Some("no-store"), "{}", r.status);
+    }
+    env.ports.upstream().fail_with(UpstreamError::Timeout);
+    let r = env.send(Req::get("/api/orders").sesion(&id)).await;
+    assert_eq!(r.header("cache-control"), Some("no-store"));
 }
 
 async fn assert_cuerpo_rechazado(

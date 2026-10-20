@@ -1,15 +1,17 @@
 //! Proxy `/api/*`: validacion de ruta y body, listas blancas de cabeceras y errores.
 
+use std::time::Duration;
+
 use application::ports::{Header, Method, UpstreamError, UpstreamResponse};
 use application::{AppError, ProxyCall};
 
-use crate::common::{Env, MAX_BODY, login, stored};
+use crate::common::{Env, MAX_BODY, REQUEST_BUDGET_SECS, login, stored};
 
 fn h(k: &str, v: &str) -> Header {
     (k.to_owned(), v.to_owned())
 }
 
-fn get<'a>(cookie: &'a str, path: &'a str, headers: &'a [Header]) -> ProxyCall<'a> {
+fn get<'a>(env: &Env, cookie: &'a str, path: &'a str, headers: &'a [Header]) -> ProxyCall<'a> {
     ProxyCall {
         session_cookie: Some(cookie),
         method: Method::Get,
@@ -17,6 +19,7 @@ fn get<'a>(cookie: &'a str, path: &'a str, headers: &'a [Header]) -> ProxyCall<'
         query: None,
         headers,
         body: Vec::new(),
+        started: env.ports.clock().elapsed(),
     }
 }
 
@@ -52,7 +55,7 @@ async fn rutas_invalidas_son_bad_request_sin_llamar_a_nadie() {
         &"a".repeat(5000),
     ];
     for ruta in rutas {
-        let r = env.app.proxy(get(&cookie, ruta, &[])).await;
+        let r = env.app.proxy(get(&env, &cookie, ruta, &[])).await;
         assert_eq!(r.unwrap_err(), AppError::BadRequest, "ruta {ruta:?}");
     }
     assert_eq!(env.ports.upstream().request_count(), 0);
@@ -74,7 +77,7 @@ async fn rutas_normales_se_reenvian() {
         "%7Euser",
     ] {
         env.app
-            .proxy(get(&cookie, ruta, &[]))
+            .proxy(get(&env, &cookie, ruta, &[]))
             .await
             .unwrap_or_else(|e| panic!("{ruta}: {e:?}"));
     }
@@ -96,6 +99,7 @@ async fn body_mayor_al_limite_es_payload_too_large() {
         query: None,
         headers: &[],
         body,
+        started: env.ports.clock().elapsed(),
     };
     let r = env.app.proxy(call(vec![0; MAX_BODY + 1])).await;
     assert_eq!(r.unwrap_err(), AppError::PayloadTooLarge);
@@ -161,6 +165,7 @@ async fn cabeceras_prohibidas_no_llegan_al_upstream() {
         query: Some("a=1&b=2"),
         headers: &headers,
         body: b"{}".to_vec(),
+        started: env.ports.clock().elapsed(),
     };
     env.app.proxy(call).await.unwrap();
 
@@ -194,7 +199,7 @@ async fn el_bearer_es_el_access_token_refrescado() {
     env.advance_secs(3600 - 30).await;
 
     env.app
-        .proxy(get(&cookie, "x", &[h("authorization", "Bearer otro")]))
+        .proxy(get(&env, &cookie, "x", &[h("authorization", "Bearer otro")]))
         .await
         .unwrap();
     let nuevo = stored(&env, &cookie).tokens.access.expose_secret().to_owned();
@@ -207,9 +212,9 @@ async fn el_bearer_es_el_access_token_refrescado() {
 #[tokio::test(start_paused = true)]
 async fn sin_sesion_el_proxy_responde_unauthorized() {
     let env = Env::new();
-    let mut call = get("basura", "orders", &[]);
+    let mut call = get(&env, "basura", "orders", &[]);
     assert_eq!(env.app.proxy(call).await.unwrap_err(), AppError::Unauthorized);
-    call = get("x", "orders", &[]);
+    call = get(&env, "x", "orders", &[]);
     call.session_cookie = None;
     assert_eq!(env.app.proxy(call).await.unwrap_err(), AppError::Unauthorized);
     assert_eq!(env.ports.upstream().request_count(), 0);
@@ -241,7 +246,7 @@ async fn set_cookie_y_cabeceras_peligrosas_del_upstream_no_vuelven() {
         ],
         body: b"hola".to_vec(),
     });
-    let resp = env.app.proxy(get(&cookie, "orders", &[])).await.unwrap();
+    let resp = env.app.proxy(get(&env, &cookie, "orders", &[])).await.unwrap();
     assert_eq!(resp.status, 201);
     assert_eq!(resp.body, b"hola");
     let nombres: Vec<&str> = resp.headers.iter().map(|(k, _)| k.as_str()).collect();
@@ -260,8 +265,77 @@ async fn set_cookie_con_mayusculas_tambien_se_filtra() {
         headers: vec![h("Set-Cookie", "a=b"), h("Connection", "close")],
         body: Vec::new(),
     });
-    let resp = env.app.proxy(get(&cookie, "orders", &[])).await.unwrap();
+    let resp = env.app.proxy(get(&env, &cookie, "orders", &[])).await.unwrap();
     assert!(resp.headers.is_empty(), "{:?}", resp.headers);
+}
+
+/// Cabeceras de cache e internas del upstream no llegan al navegador, ni las que el upstream
+/// declara hop-by-hop en `Connection` (con cualquier capitalizacion).
+#[tokio::test(start_paused = true)]
+async fn cache_cabeceras_internas_y_connection_se_filtran() {
+    let env = Env::new();
+    let cookie = login(&env).await;
+    env.ports.upstream().respond_with(UpstreamResponse {
+        status: 200,
+        headers: vec![
+            h("Cache-Control", "public, max-age=86400"),
+            h("expires", "Thu, 01 Jan 2099 00:00:00 GMT"),
+            h("Pragma", "cache"),
+            h("server", "Kestrel"),
+            h("x-amzn-requestid", "abc"),
+            h("X-Amzn-Trace-Id", "Root=1-abc"),
+            h("apigw-requestid", "Zx="),
+            h("Connection", "X-Hop, close"),
+            h("x-hop", "1"),
+            h("etag", "\"1\""),
+        ],
+        body: Vec::new(),
+    });
+    let resp = env.app.proxy(get(&env, &cookie, "orders", &[])).await.unwrap();
+    assert_eq!(resp.headers, [h("etag", "\"1\"")]);
+}
+
+/// Deadline: el upstream recibe como tope lo que queda del presupuesto de la peticion.
+#[tokio::test(start_paused = true)]
+async fn el_upstream_recibe_lo_que_queda_del_presupuesto() {
+    let env = Env::new();
+    let cookie = login(&env).await;
+    let mut call = get(&env, &cookie, "orders", &[]);
+    env.advance_secs(5).await;
+    // La peticion "empezo" hace 5 s (por ejemplo, esperando un refresh).
+    call.started = env.ports.clock().elapsed().saturating_sub(Duration::from_secs(5));
+    env.app.proxy(call).await.unwrap();
+    let t = env.ports.upstream().requests()[0].timeout.unwrap();
+    assert_eq!(t, Duration::from_secs(REQUEST_BUDGET_SECS - 5));
+}
+
+/// Sin presupuesto no se llama al upstream: `UpstreamTimeout`.
+#[tokio::test(start_paused = true)]
+async fn presupuesto_agotado_es_upstream_timeout_sin_llamar() {
+    let env = Env::new();
+    let cookie = login(&env).await;
+    let mut call = get(&env, &cookie, "orders", &[]);
+    env.advance_secs(REQUEST_BUDGET_SECS).await;
+    call.started = env
+        .ports
+        .clock()
+        .elapsed()
+        .saturating_sub(Duration::from_secs(REQUEST_BUDGET_SECS));
+    assert_eq!(env.app.proxy(call).await.unwrap_err(), AppError::UpstreamTimeout);
+    assert_eq!(env.ports.upstream().request_count(), 0);
+}
+
+/// Un refresh lento consume presupuesto: el upstream recibe el resto.
+#[tokio::test(start_paused = true)]
+async fn el_refresh_descuenta_del_presupuesto() {
+    let env = Env::new();
+    let cookie = login(&env).await;
+    env.advance_secs(3600 - 30).await;
+    env.ports.idp().set_refresh_latency(Duration::from_secs(3));
+    let call = get(&env, &cookie, "orders", &[]);
+    env.app.proxy(call).await.unwrap();
+    let t = env.ports.upstream().requests()[0].timeout.unwrap();
+    assert_eq!(t, Duration::from_secs(REQUEST_BUDGET_SECS - 3));
 }
 
 /// Upstream lento: `UpstreamTimeout` (504).
@@ -270,7 +344,7 @@ async fn upstream_lento_es_upstream_timeout() {
     let env = Env::new();
     let cookie = login(&env).await;
     env.ports.upstream().fail_with(UpstreamError::Timeout);
-    let r = env.app.proxy(get(&cookie, "orders", &[])).await;
+    let r = env.app.proxy(get(&env, &cookie, "orders", &[])).await;
     assert_eq!(r.unwrap_err(), AppError::UpstreamTimeout);
     assert_eq!(AppError::UpstreamTimeout.code(), "upstream_timeout");
 }
@@ -282,7 +356,7 @@ async fn upstream_caido_es_upstream_unavailable() {
     let cookie = login(&env).await;
     for e in [UpstreamError::Unavailable, UpstreamError::TooLarge] {
         env.ports.upstream().fail_with(e);
-        let r = env.app.proxy(get(&cookie, "orders", &[])).await;
+        let r = env.app.proxy(get(&env, &cookie, "orders", &[])).await;
         let err = r.unwrap_err();
         assert_eq!(err, AppError::UpstreamUnavailable);
         assert_eq!(err.code(), "upstream_unavailable");

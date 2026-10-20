@@ -1,6 +1,12 @@
 data "aws_caller_identity" "current" {}
 
 locals {
+  # `<project>-<env>`: el rol gh-deploy-<env> solo toca recursos con estas etiquetas.
+  name_parts = split("-", var.name)
+  env        = coalesce(var.env, length(local.name_parts) > 1 ? element(local.name_parts, length(local.name_parts) - 1) : "default")
+  project    = coalesce(var.project, length(local.name_parts) > 1 ? join("-", slice(local.name_parts, 0, length(local.name_parts) - 1)) : var.name)
+  tags       = merge(var.tags, { Project = local.project, Env = local.env })
+
   client_id         = var.create_app_client ? aws_cognito_user_pool_client.bff[0].id : var.cognito_client_id
   client_secret_arn = var.create_app_client ? aws_secretsmanager_secret.client[0].arn : var.client_secret_arn
   secret_arns = compact([
@@ -21,7 +27,7 @@ resource "aws_dynamodb_table" "sessions" {
   billing_mode                = "PAY_PER_REQUEST"
   hash_key                    = "pk"
   deletion_protection_enabled = var.dynamodb_deletion_protection
-  tags                        = var.tags
+  tags                        = local.tags
 
   attribute {
     name = "pk"
@@ -83,7 +89,7 @@ resource "aws_secretsmanager_secret" "client" {
 
   name_prefix = "${var.name}/cognito-client-secret-"
   description = "Client secret del app client del BFF (lo escribe OpenTofu; el estado va cifrado)."
-  tags        = var.tags
+  tags        = local.tags
 }
 
 resource "aws_secretsmanager_secret_version" "client" {
@@ -109,7 +115,7 @@ resource "aws_secretsmanager_secret" "origin_verify" {
 
   name_prefix = "${var.name}/origin-verify-"
   description = "Cabecera X-Origin-Verify que CloudFront agrega hacia el BFF."
-  tags        = var.tags
+  tags        = local.tags
 }
 
 resource "aws_secretsmanager_secret_version" "origin_verify" {
@@ -126,7 +132,7 @@ resource "aws_secretsmanager_secret_version" "origin_verify" {
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = local.log_group_name
   retention_in_days = var.log_retention_days
-  tags              = var.tags
+  tags              = local.tags
 }
 
 data "aws_iam_policy_document" "assume" {
@@ -148,7 +154,7 @@ resource "aws_iam_role" "lambda" {
   name                 = "${var.name}-lambda"
   assume_role_policy   = data.aws_iam_policy_document.assume.json
   permissions_boundary = var.permissions_boundary_arn
-  tags                 = var.tags
+  tags                 = local.tags
 }
 
 data "aws_iam_policy_document" "lambda" {
@@ -203,7 +209,7 @@ resource "aws_lambda_function" "bff" {
   memory_size                    = var.lambda_memory_mb
   timeout                        = var.lambda_timeout_secs
   reserved_concurrent_executions = var.lambda_reserved_concurrency
-  tags                           = var.tags
+  tags                           = local.tags
 
   logging_config {
     log_format = "Text"
@@ -212,25 +218,27 @@ resource "aws_lambda_function" "bff" {
 
   environment {
     variables = {
-      PUBLIC_ORIGIN             = var.public_origin
-      COGNITO_ISSUER            = var.cognito_issuer
-      COGNITO_DOMAIN            = var.cognito_domain
-      COGNITO_CLIENT_ID         = local.client_id
-      COGNITO_CLIENT_SECRET_ARN = local.client_secret_arn
-      OIDC_SCOPES               = var.oidc_scopes
-      EXPOSED_CLAIMS            = join(",", var.exposed_claims)
-      SESSIONS_TABLE            = aws_dynamodb_table.sessions.name
-      UPSTREAM_BASE_URL         = var.upstream_base_url
-      ORIGIN_VERIFY_SECRET_ARN  = var.origin_verify_enabled ? aws_secretsmanager_secret.origin_verify[0].arn : ""
-      SESSION_ABSOLUTE_TTL_SECS = tostring(var.session_absolute_ttl_secs)
-      SESSION_IDLE_TTL_SECS     = tostring(var.session_idle_ttl_secs)
-      REFRESH_LEASE_SECS        = tostring(var.refresh_lease_secs)
-      IDP_TIMEOUT_SECS          = tostring(var.idp_timeout_secs)
-      PROXY_MAX_BODY_BYTES      = tostring(var.proxy_max_body_bytes)
-      PROXY_TIMEOUT_SECS        = tostring(var.proxy_timeout_secs)
-      LOGOUT_REDIRECT_PATH      = var.logout_redirect_path
-      AUTH_ERROR_REDIRECT_PATH  = var.auth_error_redirect_path
-      RUST_LOG                  = var.log_level
+      PUBLIC_ORIGIN                     = var.public_origin
+      COGNITO_ISSUER                    = var.cognito_issuer
+      COGNITO_DOMAIN                    = var.cognito_domain
+      COGNITO_CLIENT_ID                 = local.client_id
+      COGNITO_CLIENT_SECRET_ARN         = local.client_secret_arn
+      OIDC_SCOPES                       = var.oidc_scopes
+      EXPOSED_CLAIMS                    = join(",", var.exposed_claims)
+      SESSIONS_TABLE                    = aws_dynamodb_table.sessions.name
+      UPSTREAM_BASE_URL                 = var.upstream_base_url
+      ORIGIN_VERIFY_SECRET_ARN          = var.origin_verify_enabled ? aws_secretsmanager_secret.origin_verify[0].arn : ""
+      SESSION_ABSOLUTE_TTL_SECS         = tostring(var.session_absolute_ttl_secs)
+      SESSION_IDLE_TTL_SECS             = tostring(var.session_idle_ttl_secs)
+      REQUEST_BUDGET_SECS               = tostring(var.lambda_timeout_secs - 1)
+      ORIGIN_VERIFY_PREVIOUS_GRACE_SECS = tostring(var.origin_verify_previous_grace_secs)
+      REFRESH_LEASE_SECS                = tostring(var.refresh_lease_secs)
+      IDP_TIMEOUT_SECS                  = tostring(var.idp_timeout_secs)
+      PROXY_MAX_BODY_BYTES              = tostring(var.proxy_max_body_bytes)
+      PROXY_TIMEOUT_SECS                = tostring(var.proxy_timeout_secs)
+      LOGOUT_REDIRECT_PATH              = var.logout_redirect_path
+      AUTH_ERROR_REDIRECT_PATH          = var.auth_error_redirect_path
+      RUST_LOG                          = var.log_level
     }
   }
 
@@ -242,6 +250,10 @@ resource "aws_lambda_function" "bff" {
     precondition {
       condition     = var.idp_timeout_secs < var.refresh_lease_secs
       error_message = "idp_timeout_secs debe ser menor que refresh_lease_secs (decision 42)."
+    }
+    precondition {
+      condition     = var.proxy_timeout_secs + var.idp_timeout_secs + 5 < var.lambda_timeout_secs
+      error_message = "proxy_timeout_secs + idp_timeout_secs + 5 debe ser menor que lambda_timeout_secs: un refresh lento mas la llamada al upstream tienen que caber en la Lambda."
     }
   }
 
@@ -256,7 +268,7 @@ resource "aws_apigatewayv2_api" "bff" {
   name          = var.name
   protocol_type = "HTTP"
   description   = "Origen del BFF detras de CloudFront."
-  tags          = var.tags
+  tags          = local.tags
 }
 
 resource "aws_apigatewayv2_integration" "bff" {
@@ -276,14 +288,14 @@ resource "aws_apigatewayv2_route" "default" {
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/apigateway/${var.name}"
   retention_in_days = var.log_retention_days
-  tags              = var.tags
+  tags              = local.tags
 }
 
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.bff.id
   name        = "$default"
   auto_deploy = true
-  tags        = var.tags
+  tags        = local.tags
 
   default_route_settings {
     throttling_rate_limit  = var.api_throttle_rate
@@ -335,5 +347,5 @@ resource "aws_ssm_parameter" "out" {
   name  = "${var.ssm_prefix}/${each.key}"
   type  = "String"
   value = each.value
-  tags  = var.tags
+  tags  = local.tags
 }

@@ -1,5 +1,6 @@
 //! Fugas de informacion por `tracing` en los flujos HTTP: nada secreto sale a los logs.
 
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,8 +10,11 @@ use axum::http::Method;
 use in_memory::{FAKE_PASSWORD, FAKE_TOTP_CODE, FAKE_TOTP_SECRET};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Metadata, Subscriber, span};
+use tracing_core::span::Current;
 
 use crate::support::{Env, PENDING_COOKIE, Req, SECRETO_ACTUAL, SECRETO_PREVIO, hash_of, query_param};
+
+const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
 
 /// Subscriber minimo que guarda cada evento y cada span (con todos sus campos, en formato
 /// `Debug`) como una linea de texto.
@@ -18,6 +22,10 @@ use crate::support::{Env, PENDING_COOKIE, Req, SECRETO_ACTUAL, SECRETO_PREVIO, h
 struct Captura {
     lineas: Arc<Mutex<Vec<String>>>,
     siguiente: Arc<AtomicU64>,
+    /// Metadatos de cada span y pila de spans abiertos, para que `Span::current()` (y con el
+    /// `record` desde los casos de uso) funcione como con un subscriber de verdad.
+    spans: Arc<Mutex<HashMap<u64, &'static Metadata<'static>>>>,
+    pila: Arc<Mutex<Vec<u64>>>,
 }
 
 struct Campos<'a>(&'a mut String);
@@ -48,7 +56,9 @@ impl Subscriber for Captura {
         let mut s = format!("SPAN {} {}", attrs.metadata().target(), attrs.metadata().name());
         attrs.record(&mut Campos(&mut s));
         self.push(s);
-        span::Id::from_u64(self.siguiente.fetch_add(1, Ordering::Relaxed) + 1)
+        let id = self.siguiente.fetch_add(1, Ordering::Relaxed) + 1;
+        self.spans.lock().unwrap().insert(id, attrs.metadata());
+        span::Id::from_u64(id)
     }
 
     fn record(&self, _: &span::Id, values: &span::Record<'_>) {
@@ -66,9 +76,21 @@ impl Subscriber for Captura {
         self.push(s);
     }
 
-    fn enter(&self, _: &span::Id) {}
+    fn enter(&self, id: &span::Id) {
+        self.pila.lock().unwrap().push(id.into_u64());
+    }
 
-    fn exit(&self, _: &span::Id) {}
+    fn exit(&self, _: &span::Id) {
+        self.pila.lock().unwrap().pop();
+    }
+
+    fn current_span(&self) -> Current {
+        let Some(id) = self.pila.lock().unwrap().last().copied() else {
+            return Current::none();
+        };
+        let meta = self.spans.lock().unwrap().get(&id).copied();
+        meta.map_or_else(Current::none, |m| Current::new(span::Id::from_u64(id), m))
+    }
 }
 
 /// Instala `captura` como subscriber del hilo. Con un unico `Dispatch` vivo en el proceso,
@@ -123,6 +145,8 @@ async fn tracing_no_contiene_secretos_en_ningun_flujo_http() {
     env.ports.idp().set_rotate_refresh(true);
     env.secrets.set_previous(Some(SECRETO_PREVIO));
     let mut secretos = Secretos::default();
+    // El `sub` solo puede salir como huella.
+    secretos.anota("sub del usuario", crate::support::SUB);
     secretos.anota("secreto de origen", SECRETO_ACTUAL);
     secretos.anota("secreto de origen previo", SECRETO_PREVIO);
     secretos.anota("secreto TOTP", FAKE_TOTP_SECRET);
@@ -151,7 +175,12 @@ async fn tracing_no_contiene_secretos_en_ningun_flujo_http() {
     secretos.anota_sesion(&env, &id);
 
     // Lectura, boleto, cuenta.
-    env.send(Req::get("/auth/me").sesion(&id)).await;
+    env.send(
+        Req::get("/auth/me")
+            .sesion(&id)
+            .header("traceparent", &format!("00-{TRACE_ID}-00f067aa0ba902b7-01")),
+    )
+    .await;
     let t = env.send(Req::post("/auth/ws-ticket").csrf().sesion(&id)).await;
     secretos.anota("boleto ws", t.json()["ticket"].as_str().unwrap());
     let json = |ruta: &str, cuerpo: &str| Req::post(ruta).csrf().sesion(&id).json(cuerpo);
@@ -325,4 +354,22 @@ async fn tracing_no_contiene_secretos_en_ningun_flujo_http() {
         );
     }
     assert_sin_secretos(&lineas, &secretos);
+
+    // Si, en cambio, la huella del `sub` y el `trace_id` del `traceparent` valido.
+    let sub_hash = domain::Subject::new(crate::support::SUB.to_owned())
+        .unwrap()
+        .log_hash();
+    assert_eq!(sub_hash.len(), 16);
+    assert!(
+        lineas
+            .iter()
+            .any(|l| l.starts_with("SPAN-RECORD") && l.contains(&format!("sub_hash=\"{sub_hash}\""))),
+        "falta sub_hash en los spans"
+    );
+    assert!(
+        lineas
+            .iter()
+            .any(|l| l.starts_with("SPAN ") && l.contains(&format!("trace_id={TRACE_ID:?}"))),
+        "falta trace_id en los spans"
+    );
 }

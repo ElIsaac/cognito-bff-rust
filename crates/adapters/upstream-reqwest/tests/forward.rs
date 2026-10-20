@@ -133,6 +133,7 @@ fn request(method: Method, path: &str) -> UpstreamRequest {
         headers: vec![],
         body: vec![],
         bearer: AccessToken::new("tok.en".to_owned()).unwrap(),
+        timeout: None,
     }
 }
 
@@ -280,6 +281,24 @@ async fn timeout_total() {
         client.forward(request(Method::Get, "lento")).await.err(),
         Some(UpstreamError::Timeout)
     );
+}
+
+#[tokio::test]
+async fn rige_el_menor_entre_el_tope_de_la_peticion_y_el_del_cliente() {
+    let s = Server::start().await;
+    // Cliente con 10 s (por defecto) y una peticion con poco presupuesto restante.
+    let mut corta = request(Method::Get, "lento");
+    corta.timeout = Some(Duration::from_millis(300));
+    assert_eq!(
+        s.client().forward(corta).await.err(),
+        Some(UpstreamError::Timeout)
+    );
+    // Cliente corto y una peticion con presupuesto de sobra: manda el del cliente.
+    let client =
+        ReqwestUpstream::new(UpstreamConfig::new(&s.base).with_timeout(Duration::from_millis(300))).unwrap();
+    let mut larga = request(Method::Get, "lento");
+    larga.timeout = Some(Duration::from_secs(30));
+    assert_eq!(client.forward(larga).await.err(), Some(UpstreamError::Timeout));
 }
 
 #[tokio::test]

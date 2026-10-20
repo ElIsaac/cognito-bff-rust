@@ -3,13 +3,14 @@
 #
 # Cuatro politicas administradas por ambiente (cada una por debajo del tope de 6144
 # caracteres): estado, servicios de datos/computo, red/CloudFront e IAM (con techo). Lo que IAM permite
-# acotar por nombre se acota por `<project>-<env>*` y por region; lo demas queda como
-# comodin de recurso con la razon anotada.
+# acotar por nombre se acota por `<project>-<env>*` y por region; lo que no lleva nombre en el
+# ARN (HTTP APIs y distribuciones de CloudFront) se acota por las etiquetas `Project` y `Env`;
+# lo demas queda como comodin de recurso con la razon anotada.
 # ---------------------------------------------------------------------------------------
 
 locals {
   region_account = "${var.region}:${local.account_id}"
-  user_pool_arns = length(var.cognito_user_pool_arns) > 0 ? var.cognito_user_pool_arns : ["arn:aws:cognito-idp:${local.region_account}:userpool/*"]
+  user_pool_arns = var.cognito_user_pool_arns
 }
 
 # --- Estado -----------------------------------------------------------------------------
@@ -140,15 +141,57 @@ data "aws_iam_policy_document" "bff_services" {
 data "aws_iam_policy_document" "bff_network" {
   for_each = local.envs
 
-  # API Gateway v2 no admite nombres en el ARN: se acota a las HTTP APIs de la region.
+  # API Gateway v2 no admite nombres en el ARN: se acota por etiqueta. Las HTTP APIs se crean
+  # con `Project` y `Env` (aws:RequestTag) y solo se modifican las que ya las llevan
+  # (aws:ResourceTag, tambien para rutas, integraciones y stages). Leer queda abierto: el
+  # listado no admite condicion.
   statement {
-    sid     = "HttpApi"
-    actions = ["apigateway:GET", "apigateway:POST", "apigateway:PUT", "apigateway:PATCH", "apigateway:DELETE"]
+    sid     = "HttpApiLectura"
+    actions = ["apigateway:GET"]
     resources = [
       "arn:aws:apigateway:${var.region}::/apis",
       "arn:aws:apigateway:${var.region}::/apis/*",
       "arn:aws:apigateway:${var.region}::/tags/*",
     ]
+  }
+
+  statement {
+    sid       = "HttpApiCrear"
+    actions   = ["apigateway:POST"]
+    resources = ["arn:aws:apigateway:${var.region}::/apis"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Env"
+      values   = [each.key]
+    }
+  }
+
+  statement {
+    sid     = "HttpApiDelAmbiente"
+    actions = ["apigateway:POST", "apigateway:PUT", "apigateway:PATCH", "apigateway:DELETE"]
+    resources = [
+      "arn:aws:apigateway:${var.region}::/apis/*",
+      "arn:aws:apigateway:${var.region}::/tags/*",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Env"
+      values   = [each.key]
+    }
   }
 
   statement {
@@ -186,19 +229,62 @@ data "aws_iam_policy_document" "bff_network" {
     resources = ["*"]
   }
 
-  # El ID de la distribucion y de las politicas no existe hasta crearlas: no se pueden acotar
-  # por nombre. Solo la funcion lleva el prefijo.
+  # El ID de la distribucion no existe hasta crearla: se acota por etiqueta, como las HTTP APIs.
+  # Se crea solo con `CreateDistributionWithTags` y `Project`/`Env` (el proveedor siempre la
+  # usa); `CreateDistribution` sin etiquetas queda fuera.
   statement {
-    sid = "CloudFront"
+    sid       = "DistribucionLectura"
+    actions   = ["cloudfront:GetDistribution", "cloudfront:ListTagsForResource"]
+    resources = ["arn:aws:cloudfront::${local.account_id}:distribution/*"]
+  }
+
+  statement {
+    sid       = "DistribucionCrear"
+    actions   = ["cloudfront:CreateDistributionWithTags"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.project]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Env"
+      values   = [each.key]
+    }
+  }
+
+  statement {
+    sid = "DistribucionDelAmbiente"
     actions = [
-      "cloudfront:CreateDistribution",
-      "cloudfront:CreateDistributionWithTags",
       "cloudfront:UpdateDistribution",
       "cloudfront:DeleteDistribution",
-      "cloudfront:GetDistribution",
       "cloudfront:TagResource",
       "cloudfront:UntagResource",
-      "cloudfront:ListTagsForResource",
+    ]
+    resources = ["arn:aws:cloudfront::${local.account_id}:distribution/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.project]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Env"
+      values   = [each.key]
+    }
+  }
+
+  # Los OAC y las politicas de cabeceras no admiten etiquetas (ni el proveedor ni la API): su
+  # ID no existe hasta crearlos y no hay condicion que los ate al proyecto. Lo que se puede
+  # hacer con ellos es acotado: crear, editar y borrar estos dos tipos.
+  statement {
+    sid = "OacYPoliticasDeCabeceras"
+    actions = [
       "cloudfront:CreateOriginAccessControl",
       "cloudfront:GetOriginAccessControl",
       "cloudfront:UpdateOriginAccessControl",
@@ -209,7 +295,6 @@ data "aws_iam_policy_document" "bff_network" {
       "cloudfront:DeleteResponseHeadersPolicy",
     ]
     resources = [
-      "arn:aws:cloudfront::${local.account_id}:distribution/*",
       "arn:aws:cloudfront::${local.account_id}:origin-access-control/*",
       "arn:aws:cloudfront::${local.account_id}:response-headers-policy/*",
     ]

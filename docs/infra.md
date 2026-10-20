@@ -32,6 +32,14 @@ Ver `infra/modules/bff/variables.tf` para la lista completa. Las entradas princi
 `upstream_base_url`, `create_app_client` (con `cognito_user_pool_id`) o `cognito_client_id` y
 `client_secret_arn`, `extra_callback_urls`, los TTL y `origin_verify_enabled`.
 
+El modulo etiqueta todo con `Project` y `Env` (`project` y `env`; por omision salen de `name`:
+`cognito-bff-dev` es `cognito-bff` y `dev`), que es lo que usan los roles `gh-deploy-<env>` para
+acotar sus permisos; `cloudfront` hace lo mismo con la distribucion. Pasa a la Lambda
+`REQUEST_BUDGET_SECS` (`lambda_timeout_secs - 1`) y `ORIGIN_VERIFY_PREVIOUS_GRACE_SECS`
+(`origin_verify_previous_grace_secs`, 900). Una `precondition` exige
+`proxy_timeout_secs + idp_timeout_secs + 5 < lambda_timeout_secs` (por omision 10 + 4 + 5 < 20;
+`lambda_timeout_secs` pasa a valer 20).
+
 Salidas usadas por `cloudfront`: `api_domain` y `origin_verify_secret_arn`. Tambien expone
 `api_endpoint`, `table_name`, `table_arn`, `lambda_function_name`, `lambda_role_arn` y `client_id`.
 
@@ -114,6 +122,15 @@ cambiar su politica. Consecuencia para los envs:
 - Si cambias los permisos que el modulo `bff` da a la Lambda, revisa que el techo los cubra.
 
 Detalle y orden de adopcion en `infra/bootstrap/README.md`.
+
+### Acotado por etiquetas
+
+Las HTTP APIs y las distribuciones de CloudFront no llevan el nombre en el ARN. Los roles de
+deploy las crean solo con `Project=<project>` y `Env=<env>` (`aws:RequestTag`; para CloudFront,
+con `CreateDistributionWithTags`) y solo modifican o borran las que ya las llevan
+(`aws:ResourceTag`). Los OAC y las response headers policies no admiten etiquetas, asi que esos
+permisos quedan por tipo de recurso. `cognito_user_pool_arns` es obligatorio: sin el, un rol de
+deploy podria tocar el app client de cualquier pool.
 
 ## Como usan los modulos los repos de envs
 

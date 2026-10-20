@@ -1055,8 +1055,10 @@ dependencies = [
  "domain",
  "serde",
  "serde_json",
+ "sha2",
  "subtle",
  "thiserror",
+ "tokio",
  "tracing",
  "url",
 ]
@@ -2975,6 +2977,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
+ "tracing-core",
 ]
 
 [[package]]

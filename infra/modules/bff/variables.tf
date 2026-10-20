@@ -141,15 +141,21 @@ variable "lambda_memory_mb" {
 }
 
 variable "lambda_timeout_secs" {
-  description = "Timeout de la Lambda."
+  description = "Timeout de la Lambda (el BFF recibe `REQUEST_BUDGET_SECS` = este valor menos 1). Debe superar `proxy_timeout_secs + idp_timeout_secs + 5`; el maximo util es 30 s (tope de integracion de API Gateway)."
   type        = number
-  default     = 15
+  default     = 20
 }
 
 variable "lambda_reserved_concurrency" {
   description = "Concurrencia reservada (-1 = sin reserva)."
   type        = number
   default     = -1
+}
+
+variable "origin_verify_previous_grace_secs" {
+  description = "Cuanto vale el valor anterior (`AWSPREVIOUS`) de `X-Origin-Verify` desde que el BFF ve el actual; cubre la propagacion de CloudFront tras rotar."
+  type        = number
+  default     = 900
 }
 
 variable "log_level" {
@@ -206,8 +212,20 @@ variable "permissions_boundary_arn" {
   default     = null
 }
 
+variable "project" {
+  description = "Valor de la etiqueta `Project`, con la que los roles `gh-deploy-<env>` acotan sus permisos (debe coincidir con `project` de `infra/bootstrap`). Null = `name` sin su ultimo segmento (`cognito-bff` para `cognito-bff-dev`)."
+  type        = string
+  default     = null
+}
+
+variable "env" {
+  description = "Valor de la etiqueta `Env` (uno de `envs` de `infra/bootstrap`). Null = ultimo segmento de `name` (`dev` para `cognito-bff-dev`)."
+  type        = string
+  default     = null
+}
+
 variable "tags" {
-  description = "Etiquetas de todos los recursos."
+  description = "Etiquetas de todos los recursos; `Project` y `Env` se agregan siempre."
   type        = map(string)
   default     = {}
 }

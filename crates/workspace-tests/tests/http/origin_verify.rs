@@ -3,7 +3,7 @@
 use application::ports::AdapterError;
 use axum::http::StatusCode;
 
-use crate::support::{Env, Req, SECRETO_ACTUAL, SECRETO_PREVIO, assert_error};
+use crate::support::{Env, GRACIA_PREVIO_SECS, Req, SECRETO_ACTUAL, SECRETO_PREVIO, assert_error};
 
 const LOGIN: &str = "/auth/login";
 
@@ -97,7 +97,9 @@ async fn rotacion_acepta_el_valor_anterior() {
     let r = env.send(con("tercero")).await;
     assert_prohibido(&r);
 
+    // El anterior se retira de Secrets Manager y la cache vence.
     env.secrets.set_previous(None);
+    env.secrets.vencer_cache();
     let r = env.send(con(SECRETO_PREVIO)).await;
     assert_prohibido(&r);
     let r = env.send(con(SECRETO_ACTUAL)).await;
@@ -148,16 +150,129 @@ async fn la_cabecera_no_se_reenvia_al_upstream() {
 }
 
 /// Cada peticion con exactamente una cabecera consulta el proveedor (cacheado por el
-/// adaptador real); las rechazadas por forma no lo consultan.
+/// adaptador real); un valor que no coincide fuerza una segunda lectura tras invalidar; las
+/// rechazadas por forma no lo consultan.
 #[tokio::test(start_paused = true)]
-async fn el_proveedor_se_consulta_una_vez_por_peticion_valida_en_forma() {
+async fn el_proveedor_se_consulta_solo_con_cabecera_bien_formada() {
     let env = Env::con_origen();
     env.send(con(SECRETO_ACTUAL)).await;
+    assert_eq!((env.secrets.lecturas(), env.secrets.cargas()), (1, 1));
     env.send(con("incorrecto")).await;
-    assert_eq!(env.secrets.lecturas(), 2);
+    assert_eq!((env.secrets.lecturas(), env.secrets.cargas()), (3, 2));
     env.send(Req::get(LOGIN).sin_verify()).await;
     env.send(con("a").header("x-origin-verify", "b")).await;
-    assert_eq!(env.secrets.lecturas(), 2);
+    assert_eq!(env.secrets.lecturas(), 3);
+}
+
+/// Rotacion que aun no llego a la cache: el valor nuevo no coincide, se invalida y recarga
+/// una vez y entonces se acepta (sin esperar al TTL).
+#[tokio::test(start_paused = true)]
+async fn valor_nuevo_tras_rotar_se_acepta_recargando() {
+    let env = Env::con_origen();
+    let r = env.send(con(SECRETO_ACTUAL)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(env.secrets.cargas(), 1);
+
+    env.secrets.rotar("origen-nuevo-0123456789abcdef");
+    let r = env.send(con("origen-nuevo-0123456789abcdef")).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(env.secrets.cargas(), 2);
+    // El anterior sigue valiendo durante la gracia.
+    let r = env.send(con(SECRETO_ACTUAL)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(env.secrets.cargas(), 2, "ya estaba en cache");
+}
+
+/// La recarga forzada se limita a una cada 30 s: un atacante con valores al azar no puede
+/// convertir al BFF en un martillo contra Secrets Manager.
+#[tokio::test(start_paused = true)]
+async fn la_recarga_forzada_se_limita_a_una_cada_30_segundos() {
+    let env = Env::con_origen();
+    env.send(con(SECRETO_ACTUAL)).await;
+    for i in 0..10 {
+        let r = env.send(con(&format!("basura-{i}"))).await;
+        assert_prohibido(&r);
+    }
+    assert_eq!(env.secrets.cargas(), 2, "solo la primera recarga");
+
+    env.secrets.rotar("origen-v3");
+    env.advance_secs(29).await;
+    assert_prohibido(&env.send(con("origen-v3")).await);
+    assert_eq!(env.secrets.cargas(), 2);
+    env.advance_secs(1).await;
+    let r = env.send(con("origen-v3")).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(env.secrets.cargas(), 3);
+}
+
+/// Muchas peticiones con el valor nuevo a la vez: una sola recarga y todas pasan.
+#[tokio::test(start_paused = true)]
+async fn peticiones_simultaneas_recargan_una_sola_vez() {
+    let env = Env::con_origen();
+    env.send(con(SECRETO_ACTUAL)).await;
+    env.secrets.rotar("origen-nuevo");
+    let respuestas = tokio::join!(
+        env.send(con("origen-nuevo")),
+        env.send(con("origen-nuevo")),
+        env.send(con("origen-nuevo")),
+        env.send(con("origen-nuevo")),
+        env.send(con("origen-nuevo")),
+    );
+    for r in [
+        respuestas.0,
+        respuestas.1,
+        respuestas.2,
+        respuestas.3,
+        respuestas.4,
+    ] {
+        assert_eq!(r.status, StatusCode::SEE_OTHER);
+    }
+    assert_eq!(env.secrets.cargas(), 2);
+}
+
+/// Si la recarga falla se rechaza (403): el valor no coincidia con lo que habia en cache.
+#[tokio::test(start_paused = true)]
+async fn si_la_recarga_falla_se_responde_403() {
+    let env = Env::con_origen();
+    env.send(con(SECRETO_ACTUAL)).await;
+    env.secrets.fail_with(Some(AdapterError::Transient));
+    let r = env.send(con("incorrecto")).await;
+    assert_prohibido(&r);
+    env.secrets.fail_with(None);
+    let r = env.send(con(SECRETO_ACTUAL)).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+}
+
+/// El anterior vale `ORIGIN_VERIFY_PREVIOUS_GRACE_SECS` desde que se vio el actual; pasado
+/// ese tiempo se rechaza aunque siga como `AWSPREVIOUS`.
+#[tokio::test(start_paused = true)]
+async fn el_anterior_solo_vale_durante_la_gracia() {
+    let env = Env::con_origen();
+    env.secrets.set_previous(Some(SECRETO_PREVIO));
+    assert_eq!(env.send(con(SECRETO_ACTUAL)).await.status, StatusCode::SEE_OTHER);
+
+    env.advance_secs(GRACIA_PREVIO_SECS - 1).await;
+    assert_eq!(env.send(con(SECRETO_PREVIO)).await.status, StatusCode::SEE_OTHER);
+    env.advance_secs(1).await;
+    assert_prohibido(&env.send(con(SECRETO_PREVIO)).await);
+    // El actual no caduca.
+    assert_eq!(env.send(con(SECRETO_ACTUAL)).await.status, StatusCode::SEE_OTHER);
+}
+
+/// La gracia corre desde que se observo el valor nuevo, no desde el arranque.
+#[tokio::test(start_paused = true)]
+async fn la_gracia_cuenta_desde_que_se_ve_la_version_nueva() {
+    let env = Env::con_origen();
+    env.send(con(SECRETO_ACTUAL)).await;
+    env.advance_secs(2 * GRACIA_PREVIO_SECS).await;
+
+    env.secrets.rotar("origen-nuevo");
+    assert_eq!(env.send(con("origen-nuevo")).await.status, StatusCode::SEE_OTHER);
+    env.advance_secs(GRACIA_PREVIO_SECS - 1).await;
+    assert_eq!(env.send(con(SECRETO_ACTUAL)).await.status, StatusCode::SEE_OTHER);
+    env.advance_secs(1).await;
+    assert_prohibido(&env.send(con(SECRETO_ACTUAL)).await);
+    assert_eq!(env.send(con("origen-nuevo")).await.status, StatusCode::SEE_OTHER);
 }
 
 /// Sin secreto configurado la cabecera se ignora: falte, sobre o se repita; no se consulta

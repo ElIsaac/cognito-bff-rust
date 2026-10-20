@@ -11,6 +11,7 @@ use in_memory::MemPorts;
 pub const ORIGIN: &str = "https://app.example.com";
 pub const CSRF_HEADER: &str = "x-requested-with";
 pub const MAX_BODY: usize = 1024 * 1024;
+pub const REQUEST_BUDGET_SECS: u64 = 14;
 pub const TENANT: &str = "tenant-42";
 
 pub fn config() -> AppConfig {
@@ -28,6 +29,7 @@ pub fn config() -> AppConfig {
         refresh_retry: RefreshRetry::default(),
         proxy_max_body: MAX_BODY,
         csrf_header: CSRF_HEADER.to_owned(),
+        request_budget: Duration::from_secs(REQUEST_BUDGET_SECS),
     }
 }
 

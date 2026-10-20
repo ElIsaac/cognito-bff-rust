@@ -45,6 +45,8 @@ pub struct AppConfig {
     pub proxy_max_body: usize,
     /// Nombre (en minusculas) de la cabecera CSRF obligatoria.
     pub csrf_header: String,
+    /// Presupuesto total de una peticion; el timeout del upstream es lo que quede de el.
+    pub request_budget: Duration,
 }
 
 impl AppConfig {

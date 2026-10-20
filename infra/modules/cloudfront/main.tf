@@ -1,4 +1,10 @@
 locals {
+  # `<project>-<env>`: el rol gh-deploy-<env> solo toca distribuciones con estas etiquetas.
+  name_parts = split("-", var.name)
+  env        = coalesce(var.env, length(local.name_parts) > 1 ? element(local.name_parts, length(local.name_parts) - 1) : "default")
+  project    = coalesce(var.project, length(local.name_parts) > 1 ? join("-", slice(local.name_parts, 0, length(local.name_parts) - 1)) : var.name)
+  tags       = merge(var.tags, { Project = local.project, Env = local.env })
+
   s3_origin_id  = "spa"
   bff_origin_id = "bff"
 
@@ -95,7 +101,7 @@ resource "aws_cloudfront_distribution" "this" {
   price_class         = var.price_class
   web_acl_id          = var.web_acl_arn
   http_version        = "http2and3"
-  tags                = var.tags
+  tags                = local.tags
 
   origin {
     origin_id                = local.s3_origin_id

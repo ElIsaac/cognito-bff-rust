@@ -16,6 +16,9 @@ const DEFAULT_CSRF_HEADER: &str = "X-Requested-With";
 const DEFAULT_PROXY_MAX_BODY: u64 = 1024 * 1024;
 const DEFAULT_PROXY_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_IDP_TIMEOUT_SECS: u64 = 4;
+/// Un segundo menos que el timeout por defecto del Lambda (15 s).
+const DEFAULT_REQUEST_BUDGET_SECS: u64 = 14;
+const DEFAULT_ORIGIN_VERIFY_GRACE_SECS: u64 = 900;
 const DEFAULT_JWKS_TTL_SECS: u64 = 3600;
 const DEFAULT_SECRET_TTL_SECS: u64 = 600;
 const DEFAULT_PENDING_TTL_SECS: u64 = 600;
@@ -84,7 +87,9 @@ impl Env<'_> {
     }
 }
 
-/// `https://host[:puerto]` sin barra final ni nada mas; `http` solo para `localhost`.
+/// `https://host[:puerto]` sin barra final ni nada mas; `http` solo para `localhost`. Se
+/// devuelve el origen serializado (host en minusculas, sin el puerto por omision): es lo
+/// que el navegador manda en `Origin`.
 fn public_origin(v: &str) -> Result<String, ConfigError> {
     const NAME: &str = "PUBLIC_ORIGIN";
     let url = Url::parse(v).map_err(|_| ConfigError::Invalid(NAME))?;
@@ -97,7 +102,7 @@ fn public_origin(v: &str) -> Result<String, ConfigError> {
         && url.username().is_empty()
         && url.password().is_none();
     if scheme_ok && bare && url.host_str().is_some() {
-        Ok(v.to_owned())
+        Ok(url.origin().ascii_serialization())
     } else {
         Err(ConfigError::Invalid(NAME))
     }
@@ -154,6 +159,7 @@ impl Config {
             refresh_retry: RefreshRetry::default(),
             proxy_max_body: 0,
             csrf_header,
+            request_budget: env.secs("REQUEST_BUDGET_SECS", DEFAULT_REQUEST_BUDGET_SECS)?,
         }
         .with_proxy_max_body(max_body);
 
@@ -186,6 +192,10 @@ impl Config {
             session_cookie: env.or("COOKIE_NAME", DEFAULT_COOKIE),
             auth_error_path: local_path(&env, "AUTH_ERROR_REDIRECT_PATH")?,
             origin_verify_secret: env.opt("ORIGIN_VERIFY_SECRET_ARN"),
+            origin_verify_previous_grace: env.secs(
+                "ORIGIN_VERIFY_PREVIOUS_GRACE_SECS",
+                DEFAULT_ORIGIN_VERIFY_GRACE_SECS,
+            )?,
         };
         http.validate()?;
 
@@ -246,6 +256,8 @@ mod tests {
         assert_eq!(c.app.proxy_max_body, 1024 * 1024);
         assert_eq!(c.http.session_cookie, "__Host-bff_session");
         assert_eq!(c.http.origin_verify_secret, None);
+        assert_eq!(c.app.request_budget, Duration::from_secs(14));
+        assert_eq!(c.http.origin_verify_previous_grace, Duration::from_mins(15));
         assert!(c.cognito.exposed_claims.is_empty());
         assert_eq!(c.dynamodb_endpoint, None);
     }
@@ -300,6 +312,51 @@ mod tests {
         let mut m = base();
         m.remove("SESSIONS_TABLE");
         assert_eq!(load(&m).unwrap_err(), ConfigError::Missing("SESSIONS_TABLE"));
+    }
+
+    #[test]
+    fn presupuesto_y_gracia_configurables() {
+        let mut m = base();
+        m.insert("REQUEST_BUDGET_SECS", "29");
+        m.insert("ORIGIN_VERIFY_PREVIOUS_GRACE_SECS", "60");
+        let c = load(&m).unwrap();
+        assert_eq!(c.app.request_budget, Duration::from_secs(29));
+        assert_eq!(c.http.origin_verify_previous_grace, Duration::from_secs(60));
+        for k in ["REQUEST_BUDGET_SECS", "ORIGIN_VERIFY_PREVIOUS_GRACE_SECS"] {
+            for v in ["0", "x"] {
+                m.insert(k, v);
+                assert_eq!(load(&m).unwrap_err(), ConfigError::Invalid(k));
+            }
+            m.remove(k);
+        }
+    }
+
+    #[test]
+    fn public_origin_se_normaliza() {
+        let caso = |v: &'static str| {
+            let mut m = base();
+            m.insert("PUBLIC_ORIGIN", v);
+            load(&m).map(|c| (c.app.public_origin, c.cognito.redirect_uri))
+        };
+        let esperado = Ok((
+            "https://app.example.com".to_owned(),
+            "https://app.example.com/auth/callback".to_owned(),
+        ));
+        assert_eq!(caso("https://APP.Example.COM"), esperado);
+        assert_eq!(caso("HTTPS://app.example.com:443"), esperado);
+        assert_eq!(
+            caso("https://app.example.com:8443").map(|c| c.0),
+            Ok("https://app.example.com:8443".to_owned())
+        );
+        assert_eq!(
+            caso("http://LOCALHOST:80").map(|c| c.0),
+            Ok("http://localhost".to_owned())
+        );
+        // Lo que no es un origen sigue rechazado.
+        assert_eq!(
+            caso("https://app.example.com:443/"),
+            Err(ConfigError::Invalid("PUBLIC_ORIGIN"))
+        );
     }
 
     #[test]

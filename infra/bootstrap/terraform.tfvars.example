@@ -15,9 +15,9 @@ existing_github_oidc_provider_arn = null
 # existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
 
 # Buckets de la SPA que el modulo cloudfront protege con bucket policy, y pools de Cognito
-# donde se crea el app client (vacio = cualquiera de la cuenta y la region).
+# donde se crea el app client (obligatorio, al menos uno).
 spa_bucket_arns        = ["arn:aws:s3:::mi-empresa-spa-dev", "arn:aws:s3:::mi-empresa-spa-prod"]
-cognito_user_pool_arns = []
+cognito_user_pool_arns = ["arn:aws:cognito-idp:us-east-2:123456789012:userpool/us-east-2_AbCdEfGhI"]
 
 tags = {
   Owner = "plataforma"

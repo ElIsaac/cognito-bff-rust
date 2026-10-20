@@ -292,6 +292,9 @@ pub struct UpstreamRequest {
     pub headers: Vec<Header>,
     pub body: Vec<u8>,
     pub bearer: AccessToken,
+    /// Tope de esta llamada (lo que queda del presupuesto de la peticion). El adaptador
+    /// aplica el menor entre este y el suyo.
+    pub timeout: Option<Duration>,
 }
 
 #[derive(Debug, Clone)]
@@ -324,6 +327,10 @@ pub trait UpstreamApi: Send + Sync {
 
 pub trait Clock: Send + Sync {
     fn now(&self) -> Timestamp;
+
+    /// Lectura monotona con precision de milisegundos, desde un origen arbitrario. Solo
+    /// sirve para medir intervalos (presupuesto de la peticion).
+    fn monotonic(&self) -> Duration;
 
     /// Espera (backoff). En tests avanza un reloj simulado.
     fn sleep(&self, d: Duration) -> impl Future<Output = ()> + Send;

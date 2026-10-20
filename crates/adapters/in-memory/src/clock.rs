@@ -48,6 +48,10 @@ impl Clock for TestClock {
         TestClock::now(self)
     }
 
+    fn monotonic(&self) -> Duration {
+        self.elapsed()
+    }
+
     async fn sleep(&self, d: Duration) {
         tokio::time::sleep(d).await;
     }

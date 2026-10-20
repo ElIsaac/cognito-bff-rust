@@ -112,8 +112,11 @@ El techo y las politicas de deploy son politicas administradas distintas del rol
 - Pasa la salida `lambda_boundary_policy_arns` (la del ambiente) como `permissions_boundary_arn`
   al modulo `bff`: sin ella, `gh-deploy-<env>` no puede crear ni modificar el rol de la
   Lambda (ver "Techo de permisos").
-- Los permisos de CloudFront y API Gateway no admiten nombres en el ARN: quedan acotados por
-  tipo de recurso y region, no por prefijo.
+- Los permisos de CloudFront y API Gateway no admiten nombres en el ARN: las HTTP APIs y las
+  distribuciones se crean solo con las etiquetas `Project` y `Env` y solo se modifican si ya las
+  llevan (los modulos `bff` y `cloudfront` las ponen). Los OAC y las response headers policies
+  no admiten etiquetas y quedan acotados por tipo de recurso y cuenta.
+- `cognito_user_pool_arns` es obligatorio (al menos un ARN de user pool, sin comodines).
 
 ## Variables y salidas
 

@@ -87,7 +87,18 @@ semantica real sin que falle un test.
 ## Flujos en forma corta
 
 Todas las rutas pasan por tres middlewares, de afuera hacia adentro: contexto (`X-Request-ID`,
-span), `X-Origin-Verify` (si esta configurado) y CSRF (metodos que cambian estado).
+span con `trace_id` del `traceparent` valido y `sub_hash` una vez resuelta la sesion, `no-store` en
+todo `/api/*`), `X-Origin-Verify` (si esta configurado) y CSRF (metodos que cambian estado).
+
+**`X-Origin-Verify`**: compara en tiempo constante con `AWSCURRENT` y, dentro de
+`ORIGIN_VERIFY_PREVIOUS_GRACE_SECS` desde que `http-axum` vio esa version actual, con
+`AWSPREVIOUS`. Si no coincide, invalida y recarga el secreto una vez (single-flight, como mucho
+cada 30 s medidos con el puerto `Clock`) antes de responder `403`; asi una rotacion que aun no
+llego a la cache no deja fuera a CloudFront ni un atacante puede forzar recargas continuas.
+
+**Cookies**: el parser lee bytes y salta los pares ajenos ilegibles; solo la cookie buscada
+(8 KiB) y el total de las cabeceras (32 KiB) tienen tope. Una cabecera ilegible o enorme da `401`
+pero no manda borrar la cookie de sesion; una cookie propia invalida o una sesion vencida si.
 
 **Login** (`GET /auth/login?returnTo=`): con sesion valida redirige a `returnTo`. Si no, genera
 `pending_id`, `state`, `nonce` y `code_verifier` (PKCE S256), guarda `PENDING#` (10 min), pone la
@@ -102,14 +113,22 @@ redirige `303` a `return_to`. Cualquier fallo despues de consumir el pending ter
 **Sesion vigente** (`EnsureFreshSession`, usada por `/auth/me`, `/api/*`, `/auth/ws-ticket` y
 `/auth/account/*`): lee la sesion por `sha256(id)`; rechaza si vencio por TTL, vida absoluta o
 inactividad; si el access token esta por vencer, un solo invocante toma el lease en DynamoDB,
-llama a Cognito y guarda los tokens nuevos; el resto espera con backoff y relee.
+llama a Cognito y guarda los tokens nuevos; el resto espera con backoff y relee. Un ID token
+refrescado con otro `sub` se trata como rechazado y destruye la sesion.
 
 **Logout** (`POST /auth/logout`): revoca el refresh token (si falla, sigue), borra la sesion,
 borra la cookie y responde `200 {"logoutUrl"}`.
 
 **Proxy** (`ANY /api/*`): CSRF, `ProxyPath`, cuerpo acotado, `EnsureFreshSession`; reenvia al
-`UPSTREAM_BASE_URL` con la lista blanca de cabeceras y `Authorization: Bearer <access>`; filtra
-`Set-Cookie` y hop-by-hop de la respuesta.
+`UPSTREAM_BASE_URL` con la lista blanca de cabeceras y `Authorization: Bearer <access>`; filtra de
+la respuesta `Set-Cookie`, hop-by-hop (y lo que el upstream nombre en `Connection`), cache
+(`cache-control`, `expires`, `pragma`) y cabeceras internas (`server`, `x-amzn-*`,
+`apigw-requestid`), y responde siempre con `Cache-Control: no-store`. El timeout del upstream es
+el menor entre `PROXY_TIMEOUT_SECS` y lo que quede de `REQUEST_BUDGET_SECS` desde que entro la
+peticion (medido con `Clock::monotonic`); sin presupuesto, `504` sin llamar.
+
+**Arranque**: antes de atender trafico se leen el secreto del client y el de `X-Origin-Verify`
+(si falla, el Lambda no arranca) ademas de la configuracion de Cognito y el JWKS.
 
 **Boleto WS** (`POST /auth/ws-ticket`): sesion valida; genera 256 bits aleatorios, guarda
 `WSTICKET#<hash>` con `session_hash` y `UserInfo` (30 s) y devuelve `{"ticket","expiresIn"}`.

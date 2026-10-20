@@ -23,7 +23,10 @@ pub const CSRF_HEADER: &str = "x-requested-with";
 pub const SESSION_COOKIE: &str = "__Host-bff_session";
 pub const PENDING_COOKIE: &str = http_axum::PENDING_COOKIE;
 pub const MAX_BODY: usize = 1024 * 1024;
+pub const REQUEST_BUDGET_SECS: u64 = 14;
 pub const TENANT: &str = "tenant-42";
+pub const SUB: &str = "user-1";
+pub const GRACIA_PREVIO_SECS: u64 = 900;
 pub const SECRET_NAME: &str = "origin-verify-secret";
 pub const SECRETO_ACTUAL: &str = "origen-actual-0123456789abcdef";
 pub const SECRETO_PREVIO: &str = "origen-previo-fedcba9876543210";
@@ -32,19 +35,27 @@ pub const SECRETO_PREVIO: &str = "origen-previo-fedcba9876543210";
 // SecretProvider de prueba
 // ---------------------------------------------------------------------------------------
 
+type Version = (String, Option<String>);
+
 #[derive(Debug)]
 struct EstadoSecreto {
+    /// Lo que hay en "Secrets Manager".
     current: String,
     previous: Option<String>,
     error: Option<AdapterError>,
+    /// Lo que tiene la cache del adaptador real: no ve los cambios hasta que `invalidate`
+    /// la vacia o vence su TTL.
+    cache: Option<Version>,
 }
 
-/// `SecretProvider` con valor actual, valor anterior opcional, contador de lecturas y un
-/// error inyectable.
+/// `SecretProvider` con valor actual, valor anterior opcional y una cache como la del
+/// adaptador real (`invalidate` la vacia), contador de lecturas y cargas y un error
+/// inyectable.
 #[derive(Debug)]
 pub struct FakeSecrets {
     estado: Mutex<EstadoSecreto>,
     lecturas: AtomicUsize,
+    cargas: AtomicUsize,
 }
 
 impl FakeSecrets {
@@ -54,8 +65,10 @@ impl FakeSecrets {
                 current: current.to_owned(),
                 previous: previous.map(str::to_owned),
                 error: None,
+                cache: None,
             }),
             lecturas: AtomicUsize::new(0),
+            cargas: AtomicUsize::new(0),
         }
     }
 
@@ -63,12 +76,29 @@ impl FakeSecrets {
         self.estado.lock().unwrap().previous = v.map(str::to_owned);
     }
 
+    /// Rotacion en Secrets Manager: el valor actual pasa a ser el anterior.
+    pub fn rotar(&self, nuevo: &str) {
+        let mut s = self.estado.lock().unwrap();
+        s.previous = Some(std::mem::replace(&mut s.current, nuevo.to_owned()));
+    }
+
+    /// Vence el TTL de la cache.
+    pub fn vencer_cache(&self) {
+        self.estado.lock().unwrap().cache = None;
+    }
+
     pub fn fail_with(&self, e: Option<AdapterError>) {
         self.estado.lock().unwrap().error = e;
     }
 
+    /// Llamadas a `get`.
     pub fn lecturas(&self) -> usize {
         self.lecturas.load(Ordering::SeqCst)
+    }
+
+    /// Veces que se fue de verdad a "Secrets Manager".
+    pub fn cargas(&self) -> usize {
+        self.cargas.load(Ordering::SeqCst)
     }
 }
 
@@ -77,17 +107,24 @@ impl FakeSecrets {
 impl SecretProvider for FakeSecrets {
     async fn get(&self, _name: &str) -> Result<SecretVersions, AdapterError> {
         self.lecturas.fetch_add(1, Ordering::SeqCst);
-        let s = self.estado.lock().unwrap();
-        if let Some(e) = s.error {
-            return Err(e);
+        let mut s = self.estado.lock().unwrap();
+        if s.cache.is_none() {
+            if let Some(e) = s.error {
+                return Err(e);
+            }
+            self.cargas.fetch_add(1, Ordering::SeqCst);
+            s.cache = Some((s.current.clone(), s.previous.clone()));
         }
+        let (current, previous) = s.cache.clone().unwrap();
         Ok(SecretVersions {
-            current: SecretValue::new(s.current.clone()),
-            previous: s.previous.clone().map(SecretValue::new),
+            current: SecretValue::new(current),
+            previous: previous.map(SecretValue::new),
         })
     }
 
-    fn invalidate(&self, _name: &str) {}
+    fn invalidate(&self, _name: &str) {
+        self.vencer_cache();
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -242,6 +279,7 @@ pub fn config() -> AppConfig {
         refresh_retry: RefreshRetry::default(),
         proxy_max_body: MAX_BODY,
         csrf_header: CSRF_HEADER.to_owned(),
+        request_budget: Duration::from_secs(REQUEST_BUDGET_SECS),
     }
 }
 
@@ -250,12 +288,13 @@ pub fn http_config() -> HttpConfig {
         session_cookie: SESSION_COOKIE.to_owned(),
         auth_error_path: "/".to_owned(),
         origin_verify_secret: None,
+        origin_verify_previous_grace: Duration::from_secs(GRACIA_PREVIO_SECS),
     }
 }
 
 pub fn user() -> UserInfo {
     UserInfo::new(
-        Subject::new("user-1".to_owned()).unwrap(),
+        Subject::new(SUB.to_owned()).unwrap(),
         Some(Email::new("ana@example.com".to_owned()).unwrap()),
         Some("Ana".to_owned()),
         vec![

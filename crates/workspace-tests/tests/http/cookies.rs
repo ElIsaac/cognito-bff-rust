@@ -233,6 +233,98 @@ async fn cookies_hostiles_dan_401_y_se_borran() {
     assert_eq!(ok.status, StatusCode::OK);
 }
 
+/// Una cookie ajena con UTF-8 (o bytes que no son ASCII) junto a la de sesion no tira abajo
+/// la autenticacion: solo se mira el par propio.
+#[tokio::test(start_paused = true)]
+async fn cookie_ajena_no_ascii_no_invalida_la_sesion() {
+    let env = Env::new();
+    let id = env.sesion().await;
+    let casos: [Vec<u8>; 3] = [
+        format!("tema=café; {SESSION_COOKIE}={id}").into_bytes(),
+        format!("{SESSION_COOKIE}={id}; nombre=José 😀").into_bytes(),
+        [
+            b"raro=\xff\xfe; ".as_slice(),
+            format!("{SESSION_COOKIE}={id}").as_bytes(),
+        ]
+        .concat(),
+    ];
+    for cabecera in casos {
+        for ruta in ["/auth/me", "/api/orders"] {
+            let r = env.send(Req::get(ruta).header_bytes("cookie", &cabecera)).await;
+            assert_eq!(r.status, StatusCode::OK, "{ruta}");
+            assert!(r.set_cookies().is_empty());
+        }
+    }
+    // Y en cabeceras `Cookie` separadas.
+    let r = env
+        .send(
+            Req::get("/auth/me")
+                .header_bytes("cookie", "tema=café".as_bytes())
+                .sesion(&id),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+/// Mas de 8 KiB de cookies ajenas (analiticas, etc.), bajo los 32 KiB: la sesion sigue
+/// autenticando. Ya no se confunde un navegador con muchas cookies con una sesion invalida.
+#[tokio::test(start_paused = true)]
+async fn mas_de_8_kib_de_cookies_ajenas_siguen_autenticando() {
+    let env = Env::new();
+    let id = env.sesion().await;
+    let ajenas = (0..6)
+        .map(|i| format!("ga{i}={}", "x".repeat(2000)))
+        .collect::<Vec<_>>()
+        .join("; ");
+    assert!(ajenas.len() > 8 * 1024 && ajenas.len() < 32 * 1024);
+    for cabecera in [
+        format!("{ajenas}; {SESSION_COOKIE}={id}"),
+        format!("{SESSION_COOKIE}={id}; {ajenas}"),
+    ] {
+        for ruta in ["/auth/me", "/api/orders"] {
+            let r = env.send(Req::get(ruta).header("cookie", &cabecera)).await;
+            assert_eq!(r.status, StatusCode::OK, "{ruta}");
+        }
+    }
+    let r = env
+        .send(Req::get("/auth/me").header("cookie", &ajenas).sesion(&id))
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+/// Una cabecera `Cookie` ilegible (mas de 32 KiB) da 401 pero no borra la cookie: no se sabe
+/// si la sesion del navegador era buena, y un borrado cerraria una sesion valida. La misma
+/// sesion funciona en cuanto las cabeceras vuelven a un tamano normal.
+#[tokio::test(start_paused = true)]
+async fn cabecera_cookie_enorme_da_401_sin_borrar_la_cookie() {
+    let env = Env::new();
+    let id = env.sesion().await;
+    let relleno = (0..9)
+        .map(|i| format!("c{i}={}", "x".repeat(4000)))
+        .collect::<Vec<_>>()
+        .join("; ");
+    assert!(relleno.len() > 32 * 1024);
+    let casos = [
+        vec![format!("{relleno}; {SESSION_COOKIE}={id}")],
+        vec![relleno.clone(), format!("{SESSION_COOKIE}={id}")],
+        // El valor buscado supera 8 KiB.
+        vec![format!("{SESSION_COOKIE}={}", "a".repeat(8 * 1024 + 1))],
+    ];
+    for cabeceras in casos {
+        for ruta in ["/auth/me", "/api/orders"] {
+            let req = cabeceras
+                .iter()
+                .fold(Req::get(ruta), |r, c| r.header("cookie", c));
+            let r = env.send(req).await;
+            assert_error(&r, StatusCode::UNAUTHORIZED, "unauthenticated");
+            assert!(r.set_cookies().is_empty(), "{ruta}: {:?}", r.set_cookies());
+        }
+    }
+    assert_eq!(env.ports.upstream().request_count(), 0);
+    let ok = env.send(Req::get("/auth/me").sesion(&id)).await;
+    assert_eq!(ok.status, StatusCode::OK);
+}
+
 /// Sin cookie alguna tambien es 401 y se borra por si hubiera una vieja en el navegador.
 #[tokio::test(start_paused = true)]
 async fn sin_cookie_es_401_y_se_borra() {

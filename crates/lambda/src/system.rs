@@ -1,10 +1,14 @@
 //! Reloj y aleatoriedad reales.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::LazyLock;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use application::ports::{Clock, RandomGenerator};
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use domain::Timestamp;
+
+/// Origen de `Clock::monotonic`: el primer uso.
+static MONOTONIC_ORIGIN: LazyLock<Instant> = LazyLock::new(Instant::now);
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemClock;
@@ -16,6 +20,10 @@ impl Clock for SystemClock {
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs()),
         )
+    }
+
+    fn monotonic(&self) -> Duration {
+        MONOTONIC_ORIGIN.elapsed()
     }
 
     async fn sleep(&self, d: Duration) {
@@ -76,5 +84,7 @@ mod tests {
     #[test]
     fn reloj() {
         assert!(SystemClock.now().as_secs() > 1_700_000_000);
+        let a = SystemClock.monotonic();
+        assert!(SystemClock.monotonic() >= a);
     }
 }
