@@ -29,6 +29,8 @@ la guia "como reemplazar un adaptador": [docs/architecture.md](docs/architecture
 
 Todo va al mismo origen que la SPA (`PUBLIC_ORIGIN`): sin CORS, con `credentials: 'same-origin'`.
 
+Guia completa para el frontend (cliente TypeScript, WebSocket, migracion desde tokens en el navegador, trampas): [docs/frontend.md](docs/frontend.md).
+
 **CSRF.** Toda peticion `POST`, `PUT`, `PATCH` o `DELETE` a `/auth/*` y `/api/*` debe llevar la
 cabecera `X-Requested-With` (el nombre se cambia con `CSRF_HEADER_NAME`; el valor no importa,
 por ejemplo `fetch`). Si el navegador manda `Origin` o `Sec-Fetch-Site`, deben ser del mismo
