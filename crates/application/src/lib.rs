@@ -13,7 +13,8 @@ mod usecases;
 use std::sync::Arc;
 
 pub use config::{AppConfig, PROXY_MAX_BODY_HARD_CAP, RefreshRetry};
-pub use error::{AppError, LoginError};
+pub use error::{AccountRejection, AppError, LoginError};
+pub use usecases::account::MfaStatus;
 pub use usecases::login::{CallbackParams, CompletedLogin, StartLoginOutcome};
 pub use usecases::proxy::ProxyCall;
 pub use usecases::ws_ticket::IssuedWsTicket;

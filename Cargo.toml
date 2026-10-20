@@ -2,7 +2,7 @@
 resolver = "3"
 # `crates/*` no sirve: crates/adapters es un directorio sin Cargo.toml. Al agregar un crate
 # de primer nivel (p. ej. lambda) hay que listarlo aqui.
-members = ["crates/domain", "crates/application", "crates/workspace-tests", "crates/adapters/*"]
+members = ["crates/domain", "crates/application", "crates/workspace-tests", "crates/adapters/*", "crates/lambda"]
 
 [workspace.package]
 version = "0.1.0"

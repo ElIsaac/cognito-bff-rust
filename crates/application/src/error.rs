@@ -21,6 +21,33 @@ pub enum AppError {
     Busy,
     #[error("internal")]
     Internal,
+    /// Rechazo de una operacion de cuenta (`/auth/account/*`).
+    #[error("{}", .0.code())]
+    Account(AccountRejection),
+}
+
+/// Rechazos de cuenta que se le muestran al usuario (lista blanca, decision 48).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountRejection {
+    CodeMismatch,
+    CodeExpired,
+    NotAuthorized,
+    InvalidPassword,
+    MfaSetupInvalid,
+    TooManyRequests,
+}
+
+impl AccountRejection {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::CodeMismatch => "code_mismatch",
+            Self::CodeExpired => "code_expired",
+            Self::NotAuthorized => "not_authorized",
+            Self::InvalidPassword => "invalid_password",
+            Self::MfaSetupInvalid => "mfa_setup_invalid",
+            Self::TooManyRequests => "too_many_requests",
+        }
+    }
 }
 
 impl AppError {
@@ -36,6 +63,7 @@ impl AppError {
             Self::UpstreamUnavailable => "upstream_unavailable",
             Self::Busy => "busy",
             Self::Internal => "internal",
+            Self::Account(r) => r.code(),
         }
     }
 }

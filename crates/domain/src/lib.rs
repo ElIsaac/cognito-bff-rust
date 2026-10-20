@@ -4,6 +4,7 @@
 //! sesion, tokens, `state`, `nonce`, `code_verifier`) va envuelto en tipos cuyo `Debug`
 //! imprime `[REDACTED]` y que no implementan `Display`.
 
+mod account;
 mod error;
 mod ids;
 mod oauth;
@@ -17,6 +18,7 @@ mod tokens;
 mod user;
 mod ws_ticket;
 
+pub use account::{DeviceName, Password, TotpCode, TotpSecret};
 pub use error::DomainError;
 pub use ids::{IdHash, PendingId, RANDOM_ID_BYTES, SessionId};
 pub use oauth::{CodeChallenge, CodeVerifier, Nonce, State};

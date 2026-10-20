@@ -20,6 +20,12 @@ pub enum DomainError {
     InvalidSubject,
     #[error("token vacio o demasiado largo")]
     InvalidToken,
+    #[error("contrasena invalida")]
+    InvalidPassword,
+    #[error("codigo TOTP invalido")]
+    InvalidTotpCode,
+    #[error("nombre de dispositivo invalido")]
+    InvalidDeviceName,
     #[error("configuracion de politica de sesion invalida: {0}")]
     InvalidPolicy(&'static str),
 }

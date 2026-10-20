@@ -1,5 +1,6 @@
 use application::ports::Ports;
 
+use crate::account::FakeAccount;
 use crate::clock::TestClock;
 use crate::idp::FakeIdp;
 use crate::rng::TestRng;
@@ -7,11 +8,12 @@ use crate::sessions::MemSessions;
 use crate::stores::{MemPending, MemTickets};
 use crate::upstream::FakeUpstream;
 
-/// Todos los fakes agrupados. Los accesores (`idp()`, `sessions()`, `pending()`, `tickets()`,
+/// Todos los fakes agrupados. Los accesores (`idp()`, `account()`, `sessions()`, `pending()`, `tickets()`,
 /// `upstream()`, `clock()`, `rng()`) devuelven los tipos concretos para poder hacer asserts.
 #[derive(Debug)]
 pub struct MemPorts {
     idp: FakeIdp,
+    account: FakeAccount,
     sessions: MemSessions,
     pending: MemPending,
     tickets: MemTickets,
@@ -32,6 +34,7 @@ impl MemPorts {
         let clock = TestClock::new();
         Self {
             idp: FakeIdp::new(clock),
+            account: FakeAccount::new(),
             sessions: MemSessions::new(),
             pending: MemPending::new(),
             tickets: MemTickets::new(),
@@ -46,6 +49,10 @@ impl MemPorts {
 impl MemPorts {
     pub fn idp(&self) -> &FakeIdp {
         &self.idp
+    }
+
+    pub fn account(&self) -> &FakeAccount {
+        &self.account
     }
 
     pub fn sessions(&self) -> &MemSessions {
@@ -75,6 +82,7 @@ impl MemPorts {
 
 impl Ports for MemPorts {
     type Idp = FakeIdp;
+    type Account = FakeAccount;
     type Sessions = MemSessions;
     type Pending = MemPending;
     type Tickets = MemTickets;
@@ -84,6 +92,10 @@ impl Ports for MemPorts {
 
     fn idp(&self) -> &FakeIdp {
         &self.idp
+    }
+
+    fn account(&self) -> &FakeAccount {
+        &self.account
     }
 
     fn sessions(&self) -> &MemSessions {

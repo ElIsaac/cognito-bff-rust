@@ -11,11 +11,15 @@ publish.workspace = true
 [dev-dependencies]
 application.workspace = true
 aws-sdk-dynamodb.workspace = true
+axum.workspace = true
 cargo_metadata.workspace = true
 domain.workspace = true
+http-axum = { path = "../adapters/http-axum" }
 in-memory = { path = "../adapters/in-memory" }
+serde_json.workspace = true
 session-dynamodb = { path = "../adapters/session-dynamodb" }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time", "test-util"] }
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
 tracing.workspace = true
 
 [lints]

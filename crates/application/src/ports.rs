@@ -8,8 +8,8 @@ use std::future::Future;
 use std::time::Duration;
 
 use domain::{
-    AccessToken, AuthCode, CodeChallenge, IdHash, Nonce, PendingAuth, ProxyPath, RefreshToken, Session,
-    State, Timestamp, TokenSet, UserInfo, Version, WsTicket,
+    AccessToken, AuthCode, CodeChallenge, DeviceName, IdHash, Nonce, Password, PendingAuth, ProxyPath,
+    RefreshToken, Session, State, Timestamp, TokenSet, TotpCode, TotpSecret, UserInfo, Version, WsTicket,
 };
 
 /// Error de un adaptador. No lleva detalles internos hacia arriba: el adaptador los
@@ -83,6 +83,64 @@ pub trait IdentityProvider: Send + Sync {
 
     /// URL de `/logout` del Hosted UI con `client_id` y `logout_uri`.
     fn logout_url(&self) -> String;
+}
+
+// ---------------------------------------------------------------------------------------
+// Cuenta del usuario (decision 48)
+// ---------------------------------------------------------------------------------------
+
+/// Rechazo de una operacion de cuenta, ya en la lista blanca que ve el usuario.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum AccountError {
+    #[error("code_mismatch")]
+    CodeMismatch,
+    #[error("code_expired")]
+    CodeExpired,
+    /// Contrasena actual incorrecta o access token que Cognito ya no acepta.
+    #[error("not_authorized")]
+    NotAuthorized,
+    /// La contrasena nueva no cumple la politica del pool.
+    #[error("invalid_password")]
+    InvalidPassword,
+    /// Verificacion o preferencia sin un TOTP asociado valido.
+    #[error("mfa_setup_invalid")]
+    MfaSetupInvalid,
+    #[error("too_many_requests")]
+    TooManyRequests,
+    #[error(transparent)]
+    Adapter(#[from] AdapterError),
+}
+
+/// Autoservicio de la cuenta con el access token de la sesion (`aws.cognito.signin.user.admin`).
+pub trait AccountManager: Send + Sync {
+    /// `true` si el TOTP esta activo para el usuario.
+    fn mfa_status(&self, access: &AccessToken) -> impl Future<Output = Result<bool, AccountError>> + Send;
+
+    fn associate_totp(
+        &self,
+        access: &AccessToken,
+    ) -> impl Future<Output = Result<TotpSecret, AccountError>> + Send;
+
+    fn verify_totp(
+        &self,
+        access: &AccessToken,
+        code: &TotpCode,
+        device: Option<&DeviceName>,
+    ) -> impl Future<Output = Result<(), AccountError>> + Send;
+
+    /// Activa (como preferido) o desactiva el TOTP.
+    fn set_totp(
+        &self,
+        access: &AccessToken,
+        enabled: bool,
+    ) -> impl Future<Output = Result<(), AccountError>> + Send;
+
+    fn change_password(
+        &self,
+        access: &AccessToken,
+        previous: &Password,
+        proposed: &Password,
+    ) -> impl Future<Output = Result<(), AccountError>> + Send;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -286,6 +344,7 @@ pub trait RandomGenerator: Send + Sync {
 /// Todos los puertos de una instancia. Cada caso de uso es generico sobre `P: Ports`.
 pub trait Ports: Send + Sync + 'static {
     type Idp: IdentityProvider;
+    type Account: AccountManager;
     type Sessions: SessionRepository;
     type Pending: PendingAuthStore;
     type Tickets: WsTicketStore;
@@ -294,6 +353,7 @@ pub trait Ports: Send + Sync + 'static {
     type Rng: RandomGenerator;
 
     fn idp(&self) -> &Self::Idp;
+    fn account(&self) -> &Self::Account;
     fn sessions(&self) -> &Self::Sessions;
     fn pending(&self) -> &Self::Pending;
     fn tickets(&self) -> &Self::Tickets;

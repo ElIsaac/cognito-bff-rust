@@ -1,3 +1,4 @@
+pub mod account;
 pub mod login;
 mod logout;
 pub mod proxy;

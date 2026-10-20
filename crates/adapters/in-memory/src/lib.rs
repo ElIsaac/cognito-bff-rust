@@ -7,6 +7,7 @@
 // Los fakes son sincronos por dentro pero implementan puertos asincronos.
 #![allow(clippy::unused_async_trait_impl)]
 
+mod account;
 mod clock;
 mod idp;
 mod ports;
@@ -16,6 +17,7 @@ mod stores;
 mod upstream;
 mod util;
 
+pub use account::{FAKE_PASSWORD, FAKE_TOTP_CODE, FAKE_TOTP_SECRET, FakeAccount};
 pub use clock::{BASE_EPOCH_SECS, TestClock};
 pub use idp::FakeIdp;
 pub use ports::MemPorts;

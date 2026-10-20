@@ -1,0 +1,40 @@
+[package]
+name = "lambda"
+description = "Composition root del BFF: configuracion por entorno, adaptadores reales y lambda_http."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "cognito-bff"
+path = "src/main.rs"
+
+[features]
+# Desarrollo local: servidor HTTP propio, secretos del entorno, DynamoDB Local y upstream http.
+local = ["secrets-aws/local", "upstream-reqwest/insecure-http", "axum/tokio", "axum/http1"]
+
+[dependencies]
+application.workspace = true
+domain.workspace = true
+http-axum = { path = "../adapters/http-axum" }
+oidc-cognito = { path = "../adapters/oidc-cognito" }
+secrets-aws = { path = "../adapters/secrets-aws" }
+session-dynamodb = { path = "../adapters/session-dynamodb" }
+upstream-reqwest = { path = "../adapters/upstream-reqwest" }
+aws-config = { version = "1.12.0", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
+aws-lc-rs.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-secretsmanager.workspace = true
+axum.workspace = true
+lambda_http = { version = "1.3.1", default-features = false, features = ["apigw_http"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net"] }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "json", "env-filter"] }
+url.workspace = true
+
+[lints]
+workspace = true

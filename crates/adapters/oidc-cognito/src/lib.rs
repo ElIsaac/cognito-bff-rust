@@ -6,7 +6,10 @@
 //!   recarga una vez ante `invalid_client` (rotacion).
 //! - El ID token se valida aqui (RS256 fijo, `iss`, `aud`, `exp`, `iat`, `token_use`, `nonce`)
 //!   y solo sus claims validados salen hacia la aplicacion.
+//! - `CognitoAccount`: autoservicio de cuenta (TOTP y contrasena) con el access token del
+//!   usuario (decision 48).
 
+mod account;
 mod config;
 mod id_token;
 mod jwks;
@@ -19,6 +22,7 @@ use application::ports::{
 };
 use domain::{AccessToken, AuthCode, CodeVerifier, Nonce, RefreshToken, TokenSet};
 
+pub use account::CognitoAccount;
 pub use config::{CognitoConfig, ConfigError};
 use id_token::IdTokenValidator;
 use jwks::JwksCache;

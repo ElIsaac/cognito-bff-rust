@@ -1,0 +1,26 @@
+[package]
+name = "http-axum"
+description = "Entrada HTTP del BFF sobre axum: rutas /auth/* y /api/*, cookies __Host-, CSRF, X-Origin-Verify y errores con requestId."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+application.workspace = true
+domain.workspace = true
+axum = { workspace = true, features = ["json", "matched-path"] }
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+# Las pruebas HTTP con los fakes viven en crates/workspace-tests (un adaptador no depende
+# de otro, ni en dev-dependencies).
+
+[lints]
+workspace = true
