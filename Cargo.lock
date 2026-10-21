@@ -2672,11 +2672,15 @@ name = "upstream-reqwest"
 version = "0.1.0"
 dependencies = [
  "application",
+ "aws-credential-types",
+ "aws-sigv4",
+ "aws-smithy-runtime-api",
  "axum",
  "bytes",
  "domain",
  "futures-util",
  "reqwest",
+ "sha2",
  "thiserror",
  "tokio",
  "tracing",

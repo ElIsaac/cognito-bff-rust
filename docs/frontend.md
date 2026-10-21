@@ -77,7 +77,7 @@ Errores propios de cuenta (siempre con el sobre de abajo):
 ### Proxy `/api/*`
 
 `ANY /api/<ruta>?<query>` se reenvia a `UPSTREAM_BASE_URL/<ruta>?<query>` con el access token del
-usuario. Status y cuerpo del upstream llegan tal cual (incluidos sus propios `4xx`/`5xx`);
+usuario (en `Authorization: Bearer`, o firmado con SigV4 si el BFF usa `UPSTREAM_AUTH=aws_iam`). Status y cuerpo del upstream llegan tal cual (incluidos sus propios `4xx`/`5xx`);
 `Set-Cookie` se elimina. Las rutas con `..`, `\`, `%2e`, `%2f` o similares se rechazan con
 `400`. Cuerpo maximo `PROXY_MAX_BODY_BYTES` (1 MiB por defecto) -> `413`.
 

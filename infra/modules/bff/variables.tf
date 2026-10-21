@@ -68,6 +68,39 @@ variable "upstream_base_url" {
   type        = string
 }
 
+variable "upstream_auth" {
+  description = "Como se autentica el BFF ante el upstream: `none` (`Authorization: Bearer <access>`) o `aws_iam` (Function URL con `AuthType: AWS_IAM`: SigV4 y access token en `upstream_token_header`)."
+  type        = string
+  default     = "none"
+
+  validation {
+    condition     = contains(["none", "aws_iam"], var.upstream_auth)
+    error_message = "Debe ser `none` o `aws_iam`."
+  }
+}
+
+variable "upstream_token_header" {
+  description = "Cabecera que lleva el access token crudo con `upstream_auth = \"aws_iam\"`. Minusculas; no `authorization`, `host`, `cookie` ni `x-amz-*`."
+  type        = string
+  default     = "x-bff-access-token"
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.upstream_token_header)) && !contains(["authorization", "host", "cookie"], var.upstream_token_header) && !startswith(var.upstream_token_header, "x-amz-")
+    error_message = "Minusculas, digitos y guiones; no `authorization`, `host`, `cookie` ni `x-amz-*`."
+  }
+}
+
+variable "upstream_lambda_function_arn" {
+  description = "ARN de la Lambda cuya Function URL (`AWS_IAM`) es el upstream. Obligatorio con `upstream_auth = \"aws_iam\"`: se concede `lambda:InvokeFunctionUrl` y `lambda:InvokeFunction` sobre ella."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.upstream_auth != "aws_iam" || var.upstream_lambda_function_arn != null
+    error_message = "`upstream_lambda_function_arn` es obligatorio con `upstream_auth = \"aws_iam\"`."
+  }
+}
+
 variable "exposed_claims" {
   description = "Claims extra del ID token que salen en `/auth/me` y en el boleto WS."
   type        = list(string)
@@ -201,7 +234,7 @@ variable "dynamodb_deletion_protection" {
 }
 
 variable "ssm_prefix" {
-  description = "Si se da (p. ej. `/cognito-bff/dev`), publica dominio de la API, secreto de origen y tabla en SSM para otros estados."
+  description = "Si se da (p. ej. `/cognito-bff/dev`), publica dominio de la API, secreto de origen, tabla y rol de la Lambda en SSM para otros estados."
   type        = string
   default     = null
 }

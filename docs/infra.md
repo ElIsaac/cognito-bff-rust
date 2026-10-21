@@ -32,6 +32,15 @@ Ver `infra/modules/bff/variables.tf` para la lista completa. Las entradas princi
 `upstream_base_url`, `create_app_client` (con `cognito_user_pool_id`) o `cognito_client_id` y
 `client_secret_arn`, `extra_callback_urls`, los TTL y `origin_verify_enabled`.
 
+Upstream con `AuthType: AWS_IAM` (opcional): `upstream_auth = "aws_iam"` (por omision `none`),
+`upstream_lambda_function_arn` (obligatorio en ese modo) y `upstream_token_header` (por omision
+`x-bff-access-token`). Pasa `UPSTREAM_AUTH` y `UPSTREAM_TOKEN_HEADER` a la Lambda y agrega al
+rol `lambda:InvokeFunctionUrl` (condicion `lambda:FunctionUrlAuthType = AWS_IAM`) y
+`lambda:InvokeFunction` (condicion `lambda:InvokedViaFunctionUrl = true`) sobre esa funcion.
+Al otro lado, la Function URL debe tener `AuthType: AWS_IAM` y, si es de otra cuenta, una
+politica basada en recursos que permita el rol de la Lambda (`lambda_role_arn`). Con el techo de
+`bootstrap` hay que listar la funcion en `lambda_upstream_function_arns`.
+
 El modulo etiqueta todo con `Project` y `Env` (`project` y `env`; por omision salen de `name`:
 `cognito-bff-dev` es `cognito-bff` y `dev`), que es lo que usan los roles `gh-deploy-<env>` para
 acotar sus permisos; `cloudfront` hace lo mismo con la distribucion. Pasa a la Lambda
@@ -41,7 +50,8 @@ acotar sus permisos; `cloudfront` hace lo mismo con la distribucion. Pasa a la L
 `lambda_timeout_secs` pasa a valer 20).
 
 Salidas usadas por `cloudfront`: `api_domain` y `origin_verify_secret_arn`. Tambien expone
-`api_endpoint`, `table_name`, `table_arn`, `lambda_function_name`, `lambda_role_arn` y `client_id`.
+`api_endpoint`, `table_name`, `table_arn`, `lambda_function_name`, `lambda_role_arn` y `client_id`. Con `ssm_prefix` publica ademas
+`lambda-role-arn`.
 
 `permissions_boundary_arn` (por omision `null`) pone una permissions boundary al rol de la
 Lambda. Con los roles `gh-deploy-<env>` de `bootstrap` es obligatoria: ver abajo.

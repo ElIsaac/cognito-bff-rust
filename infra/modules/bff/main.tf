@@ -181,6 +181,36 @@ data "aws_iam_policy_document" "lambda" {
     resources = local.secret_arns
   }
 
+  # Una Function URL con AWS_IAM exige las dos acciones (la segunda solo si la invocacion
+  # llega por la URL).
+  dynamic "statement" {
+    for_each = var.upstream_auth == "aws_iam" ? [var.upstream_lambda_function_arn] : []
+    content {
+      sid       = "UpstreamFunctionUrl"
+      actions   = ["lambda:InvokeFunctionUrl"]
+      resources = [statement.value]
+      condition {
+        test     = "StringEquals"
+        variable = "lambda:FunctionUrlAuthType"
+        values   = ["AWS_IAM"]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.upstream_auth == "aws_iam" ? [var.upstream_lambda_function_arn] : []
+    content {
+      sid       = "UpstreamInvokeViaFunctionUrl"
+      actions   = ["lambda:InvokeFunction"]
+      resources = [statement.value]
+      condition {
+        test     = "Bool"
+        variable = "lambda:InvokedViaFunctionUrl"
+        values   = ["true"]
+      }
+    }
+  }
+
   dynamic "statement" {
     for_each = var.dynamodb_kms_key_arn == null ? [] : [var.dynamodb_kms_key_arn]
     content {
@@ -227,6 +257,8 @@ resource "aws_lambda_function" "bff" {
       EXPOSED_CLAIMS                    = join(",", var.exposed_claims)
       SESSIONS_TABLE                    = aws_dynamodb_table.sessions.name
       UPSTREAM_BASE_URL                 = var.upstream_base_url
+      UPSTREAM_AUTH                     = var.upstream_auth
+      UPSTREAM_TOKEN_HEADER             = var.upstream_token_header
       ORIGIN_VERIFY_SECRET_ARN          = var.origin_verify_enabled ? aws_secretsmanager_secret.origin_verify[0].arn : ""
       SESSION_ABSOLUTE_TTL_SECS         = tostring(var.session_absolute_ttl_secs)
       SESSION_IDLE_TTL_SECS             = tostring(var.session_idle_ttl_secs)
@@ -333,9 +365,10 @@ resource "aws_lambda_permission" "api" {
 locals {
   ssm_values = var.ssm_prefix == null ? {} : merge(
     {
-      "api-domain" = replace(aws_apigatewayv2_api.bff.api_endpoint, "https://", "")
-      "table-name" = aws_dynamodb_table.sessions.name
-      "table-arn"  = aws_dynamodb_table.sessions.arn
+      "api-domain"      = replace(aws_apigatewayv2_api.bff.api_endpoint, "https://", "")
+      "table-name"      = aws_dynamodb_table.sessions.name
+      "table-arn"       = aws_dynamodb_table.sessions.arn
+      "lambda-role-arn" = aws_iam_role.lambda.arn
     },
     var.origin_verify_enabled ? { "origin-verify-secret-arn" = aws_secretsmanager_secret.origin_verify[0].arn } : {},
   )

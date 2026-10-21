@@ -120,7 +120,7 @@ refrescado con otro `sub` se trata como rechazado y destruye la sesion.
 borra la cookie y responde `200 {"logoutUrl"}`.
 
 **Proxy** (`ANY /api/*`): CSRF, `ProxyPath`, cuerpo acotado, `EnsureFreshSession`; reenvia al
-`UPSTREAM_BASE_URL` con la lista blanca de cabeceras y `Authorization: Bearer <access>`; filtra de
+`UPSTREAM_BASE_URL` con la lista blanca de cabeceras y `Authorization: Bearer <access>` (con `UPSTREAM_AUTH=aws_iam`, la peticion se firma con SigV4 y el access token va crudo en `UPSTREAM_TOKEN_HEADER`; se descartan las `authorization`, `x-amz-*` y esa cabecera si las trae el cliente); filtra de
 la respuesta `Set-Cookie`, hop-by-hop (y lo que el upstream nombre en `Connection`), cache
 (`cache-control`, `expires`, `pragma`) y cabeceras internas (`server`, `x-amzn-*`,
 `apigw-requestid`), y responde siempre con `Cache-Control: no-store`. El timeout del upstream es

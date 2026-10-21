@@ -8,9 +8,9 @@ use application::App;
 use application::ports::{AdapterError, Ports, SecretProvider, SecretVersions};
 use oidc_cognito::{CognitoAccount, CognitoIdp};
 use session_dynamodb::{DynamoPending, DynamoSessions, DynamoTickets};
-use upstream_reqwest::ReqwestUpstream;
+use upstream_reqwest::{AwsIamSigner, ReqwestUpstream};
 
-use crate::config::Config;
+use crate::config::{Config, UpstreamAuth};
 use crate::system::{OsRng, SystemClock};
 
 #[derive(Debug, thiserror::Error)]
@@ -24,6 +24,8 @@ pub enum BuildError {
     },
     #[error("{0}")]
     Upstream(#[from] upstream_reqwest::ConfigError),
+    #[error("UPSTREAM_AUTH=aws_iam necesita credenciales AWS y el SDK no tiene proveedor")]
+    NoCredentials,
     #[error("{0}")]
     Http(#[from] http_axum::HttpConfigError),
 }
@@ -128,6 +130,13 @@ pub async fn build<S: SecretProvider + 'static>(
         preload(&*secrets, "ORIGIN_VERIFY_SECRET_ARN", name).await?;
     }
 
+    let mut upstream_cfg = cfg.upstream;
+    if let UpstreamAuth::AwsIam { token_header, region } = &cfg.upstream_auth {
+        let credentials = sdk.credentials_provider().ok_or(BuildError::NoCredentials)?;
+        upstream_cfg =
+            upstream_cfg.with_aws_iam(AwsIamSigner::new(token_header, region.clone(), credentials)?);
+    }
+
     let mut ddb = aws_sdk_dynamodb::config::Builder::from(sdk);
     if let Some(endpoint) = &cfg.dynamodb_endpoint {
         ddb = ddb.endpoint_url(endpoint);
@@ -145,7 +154,7 @@ pub async fn build<S: SecretProvider + 'static>(
         sessions: DynamoSessions::new(ddb.clone(), &cfg.table),
         pending: DynamoPending::new(ddb.clone(), &cfg.table),
         tickets: DynamoTickets::new(ddb, &cfg.table),
-        upstream: ReqwestUpstream::new(cfg.upstream)?,
+        upstream: ReqwestUpstream::new(upstream_cfg)?,
         clock: SystemClock,
         rng: OsRng::default(),
     };

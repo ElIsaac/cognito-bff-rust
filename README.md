@@ -48,7 +48,7 @@ origen. Si no: `403 {"error":"csrf"}`. Los `GET` nunca cambian estado.
 | `/auth/account/mfa/totp/verify` | POST | Cuerpo `{"code": "123456", "deviceName": "..."}` (`deviceName` opcional). `204`. |
 | `/auth/account/mfa/preference` | POST | Cuerpo `{"totp": true}`. `204`. |
 | `/auth/account/change-password` | POST | Cuerpo `{"previousPassword": "...", "proposedPassword": "..."}`. `204`. |
-| `/api/*` | cualquiera | Proxy a `UPSTREAM_BASE_URL/<ruta>?<query>` con `Authorization: Bearer <access>`. Status y cuerpo del upstream tal cual; sin `Set-Cookie`. |
+| `/api/*` | cualquiera | Proxy a `UPSTREAM_BASE_URL/<ruta>?<query>` con `Authorization: Bearer <access>` (o firmada con SigV4 con `UPSTREAM_AUTH=aws_iam`). Status y cuerpo del upstream tal cual; sin `Set-Cookie`. |
 
 Los cuerpos de `/auth/account/*` son `application/json` de hasta 4 KiB y no admiten campos
 desconocidos.
@@ -127,6 +127,9 @@ arrancar: un valor invalido falla de inmediato y el error nombra la variable, nu
 | `OIDC_SCOPES` | `openid email profile` | |
 | `SESSIONS_TABLE` | requerida | Tabla DynamoDB (`pk` string, TTL en el atributo `ttl`). |
 | `UPSTREAM_BASE_URL` | requerida | Tu API, sin barra final. |
+| `UPSTREAM_AUTH` | `none` | `none`: `Authorization: Bearer <access>`. `aws_iam`: el upstream es una Function URL con `AuthType: AWS_IAM`; cada peticion se firma con SigV4 (servicio `lambda`) con las credenciales del rol de la Lambda y el access token, crudo, viaja en `UPSTREAM_TOKEN_HEADER`. |
+| `UPSTREAM_TOKEN_HEADER` | requerida con `aws_iam` | Cabecera del access token; en minusculas, distinta de `authorization`, `host`, `cookie` y `x-amz-*`. Se valida al arrancar. |
+| `UPSTREAM_AWS_REGION` | `AWS_REGION` | Region de la firma SigV4 (la de la Function URL). |
 | `ORIGIN_VERIFY_SECRET_ARN` | vacio | Secreto de `X-Origin-Verify`; vacio = desactivado. Si el valor no coincide, el secreto se recarga una vez (como mucho cada 30 s) antes de responder `403`. |
 | `ORIGIN_VERIFY_PREVIOUS_GRACE_SECS` | `900` | Cuanto vale el valor anterior (`AWSPREVIOUS`) desde que el BFF ve el actual. |
 | `COOKIE_NAME` | `__Host-bff_session` | Debe empezar por `__Host-`. |

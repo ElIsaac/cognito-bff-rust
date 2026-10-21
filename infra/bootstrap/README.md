@@ -80,7 +80,8 @@ que lo impide:
    unico que necesita la Lambda del BFF: `logs:CreateLogStream` y `PutLogEvents` en sus log
    groups, `dynamodb:GetItem/PutItem/UpdateItem/DeleteItem` en las tablas
    `<project>-<env>*`, `secretsmanager:GetSecretValue` en los secretos `<project>-<env>*` y,
-   si lo configuras, KMS sobre `lambda_kms_key_arns`. Tablas o secretos fuera del prefijo
+   si lo configuras, KMS sobre `lambda_kms_key_arns` e invocar las Lambdas de
+   `lambda_upstream_function_arns` (solo con `upstream_auth = "aws_iam"` en el modulo `bff`). Tablas o secretos fuera del prefijo
    (un `table_name` propio, un `client_secret_arn` creado a mano) se agregan con
    `lambda_extra_table_arns` y `lambda_extra_secret_arns`; si no, el techo los niega.
 2. `iam:CreateRole`, `iam:PutRolePolicy` y `iam:PutRolePermissionsBoundary` solo se permiten con

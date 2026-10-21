@@ -3,6 +3,9 @@
 //! - Destino: `UPSTREAM_BASE_URL` (https, sin barra final) + `/` + `ProxyPath` + `?query`.
 //! - Cabeceras: solo las recibidas (ya filtradas por `application`) mas
 //!   `authorization: Bearer <access>`; una `authorization` recibida se descarta.
+//! - Modo opcional `aws_iam` (Function URL con `AuthType: AWS_IAM`): la peticion se firma con
+//!   `SigV4` (modulo `iam`) y el access token, crudo, va en la cabecera configurada; se descartan las
+//!   `authorization`, `x-amz-*` y la cabecera del token que traiga el cliente.
 //! - Timeout total (conexion, cabeceras y cuerpo) configurable; si la peticion trae un tope
 //!   propio (lo que queda de su presupuesto) rige el menor de los dos; sin redirecciones; sin
 //!   proxy de entorno; cuerpo de la respuesta leido en streaming con tope.
@@ -11,12 +14,16 @@
 //! - Las cabeceras de la respuesta (incluidos varios `set-cookie`) llegan sin filtrar:
 //!   las filtra `application`.
 
+mod iam;
+
 use std::time::Duration;
 
 use application::ports::{Method, UpstreamApi, UpstreamError, UpstreamRequest, UpstreamResponse};
 use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, HOST, HeaderMap, HeaderName, HeaderValue};
 use reqwest::redirect::Policy;
 use url::Url;
+
+pub use iam::{AwsIamSigner, validate_token_header};
 
 /// `PROXY_TIMEOUT_SECS` por defecto.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -33,6 +40,10 @@ pub enum ConfigError {
     TrailingSlash,
     #[error("UPSTREAM_BASE_URL no debe llevar credenciales, query ni fragmento")]
     UnexpectedParts,
+    #[error("UPSTREAM_TOKEN_HEADER no es valido")]
+    TokenHeader,
+    #[error("la region de la firma SigV4 no puede estar vacia")]
+    Region,
     #[error("no se pudo construir el cliente HTTP")]
     Client,
 }
@@ -42,6 +53,8 @@ pub struct UpstreamConfig {
     pub base_url: String,
     pub timeout: Duration,
     pub max_response_bytes: usize,
+    /// `Some` activa el modo `aws_iam`; `None` es el bearer de siempre.
+    pub aws_iam: Option<AwsIamSigner>,
 }
 
 impl UpstreamConfig {
@@ -50,7 +63,14 @@ impl UpstreamConfig {
             base_url: base_url.into(),
             timeout: DEFAULT_TIMEOUT,
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
+            aws_iam: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_aws_iam(mut self, signer: AwsIamSigner) -> Self {
+        self.aws_iam = Some(signer);
+        self
     }
 
     #[must_use]
@@ -73,6 +93,7 @@ pub struct ReqwestUpstream {
     base: String,
     timeout: Duration,
     max_response_bytes: usize,
+    aws_iam: Option<AwsIamSigner>,
 }
 
 fn validate_base(base: &str) -> Result<(), ConfigError> {
@@ -114,6 +135,7 @@ impl ReqwestUpstream {
             base: config.base_url,
             timeout: config.timeout,
             max_response_bytes: config.max_response_bytes,
+            aws_iam: config.aws_iam,
         })
     }
 
@@ -139,7 +161,7 @@ fn to_method(m: Method) -> reqwest::Method {
     }
 }
 
-fn request_headers(req: &UpstreamRequest) -> Result<HeaderMap, UpstreamError> {
+fn request_headers(req: &UpstreamRequest, iam: Option<&AwsIamSigner>) -> Result<HeaderMap, UpstreamError> {
     let mut map = HeaderMap::new();
     for (name, value) in &req.headers {
         let name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| invalid_header())?;
@@ -147,13 +169,20 @@ fn request_headers(req: &UpstreamRequest) -> Result<HeaderMap, UpstreamError> {
         if name == HOST || name == AUTHORIZATION {
             continue;
         }
+        // En `aws_iam` el navegador tampoco puede inyectar `x-amz-*` ni la cabecera del token.
+        if iam.is_some_and(|s| name.as_str().starts_with("x-amz-") || name == *s.token_header()) {
+            continue;
+        }
         let value = HeaderValue::from_str(value).map_err(|_| invalid_header())?;
         map.append(name, value);
     }
-    let mut bearer = HeaderValue::from_str(&format!("Bearer {}", req.bearer.expose_secret()))
-        .map_err(|_| invalid_header())?;
-    bearer.set_sensitive(true);
-    map.insert(AUTHORIZATION, bearer);
+    let (name, raw) = match iam {
+        Some(s) => (s.token_header().clone(), req.bearer.expose_secret().to_owned()),
+        None => (AUTHORIZATION, format!("Bearer {}", req.bearer.expose_secret())),
+    };
+    let mut token = HeaderValue::from_str(&raw).map_err(|_| invalid_header())?;
+    token.set_sensitive(true);
+    map.insert(name, token);
     Ok(map)
 }
 
@@ -179,8 +208,19 @@ fn map_error(e: &reqwest::Error) -> UpstreamError {
 
 impl UpstreamApi for ReqwestUpstream {
     async fn forward(&self, req: UpstreamRequest) -> Result<UpstreamResponse, UpstreamError> {
-        let url = self.url_for(&req);
-        let headers = request_headers(&req)?;
+        let mut url = self.url_for(&req);
+        let mut headers = request_headers(&req, self.aws_iam.as_ref())?;
+        if let Some(signer) = &self.aws_iam {
+            // Se firma exactamente la URL que se envia (ya normalizada por `url`).
+            url = Url::parse(&url).map_err(|_| invalid_header())?.into();
+            let signed = signer
+                .sign(to_method(req.method).as_str(), &url, &headers, &req.body)
+                .await
+                .map_err(|()| UpstreamError::Unavailable)?;
+            for (name, value) in signed {
+                headers.insert(name, value);
+            }
+        }
         let timeout = req.timeout.map_or(self.timeout, |t| t.min(self.timeout));
         let mut builder = self
             .client

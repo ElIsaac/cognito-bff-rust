@@ -27,4 +27,6 @@ tags = {
 # techo de sus roles debe admitir (vacio = solo lo que lleva el prefijo).
 lambda_extra_table_arns  = []
 lambda_extra_secret_arns = []
+# Solo con upstream_auth = "aws_iam": Lambdas cuya Function URL invoca el BFF.
+lambda_upstream_function_arns = []
 lambda_kms_key_arns      = []

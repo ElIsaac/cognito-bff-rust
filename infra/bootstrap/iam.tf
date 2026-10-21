@@ -467,6 +467,15 @@ data "aws_iam_policy_document" "lambda_boundary" {
   }
 
   dynamic "statement" {
+    for_each = length(var.lambda_upstream_function_arns) > 0 ? [var.lambda_upstream_function_arns] : []
+    content {
+      sid       = "UpstreamFunctionUrl"
+      actions   = ["lambda:InvokeFunctionUrl", "lambda:InvokeFunction"]
+      resources = statement.value
+    }
+  }
+
+  dynamic "statement" {
     for_each = length(var.lambda_kms_key_arns) > 0 ? [var.lambda_kms_key_arns] : []
     content {
       sid       = "LlaveDeLaTabla"

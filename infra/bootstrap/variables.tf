@@ -104,6 +104,12 @@ variable "lambda_extra_secret_arns" {
   default     = []
 }
 
+variable "lambda_upstream_function_arns" {
+  description = "Lambdas con Function URL `AWS_IAM` que el BFF puede invocar (`upstream_auth = \"aws_iam\"`). Entran al techo de los roles."
+  type        = list(string)
+  default     = []
+}
+
 variable "lambda_kms_key_arns" {
   description = "Llaves KMS que la Lambda usa (`dynamodb_kms_key_arn` del modulo `bff`). Vacio = el techo no da permisos de KMS."
   type        = list(string)

@@ -7,7 +7,7 @@ use application::{AppConfig, RefreshRetry};
 use domain::{PendingPolicy, ReturnTo, SessionPolicy, SessionPolicyConfig, WsTicketPolicy};
 use http_axum::HttpConfig;
 use oidc_cognito::CognitoConfig;
-use upstream_reqwest::UpstreamConfig;
+use upstream_reqwest::{UpstreamConfig, validate_token_header};
 use url::Url;
 
 const DEFAULT_SCOPES: &str = "openid email profile";
@@ -41,6 +41,16 @@ pub enum ConfigError {
     Http(#[from] http_axum::HttpConfigError),
 }
 
+/// Como se autentica el BFF ante el upstream (`UPSTREAM_AUTH`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpstreamAuth {
+    /// `authorization: Bearer <access>`.
+    None,
+    /// Function URL con `AWS_IAM`: `SigV4` y access token en `token_header`. Las credenciales
+    /// salen del SDK en el wiring.
+    AwsIam { token_header: String, region: String },
+}
+
 /// Todo lo que el composition root necesita, ya validado.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -48,6 +58,7 @@ pub struct Config {
     pub cognito: CognitoConfig,
     pub http: HttpConfig,
     pub upstream: UpstreamConfig,
+    pub upstream_auth: UpstreamAuth,
     pub table: String,
     // En local los secretos salen del entorno, sin cache.
     #[cfg_attr(feature = "local", allow(dead_code))]
@@ -114,6 +125,23 @@ fn local_path(env: &Env<'_>, name: &'static str) -> Result<String, ConfigError> 
         Ok(v)
     } else {
         Err(ConfigError::Invalid(name))
+    }
+}
+
+fn upstream_auth(env: &Env<'_>) -> Result<UpstreamAuth, ConfigError> {
+    match env.or("UPSTREAM_AUTH", "none").as_str() {
+        "none" => Ok(UpstreamAuth::None),
+        "aws_iam" => {
+            let token_header = env.req("UPSTREAM_TOKEN_HEADER")?;
+            validate_token_header(&token_header)
+                .map_err(|_| ConfigError::Invalid("UPSTREAM_TOKEN_HEADER"))?;
+            let region = env
+                .opt("UPSTREAM_AWS_REGION")
+                .or_else(|| env.opt("AWS_REGION"))
+                .ok_or(ConfigError::Missing("UPSTREAM_AWS_REGION"))?;
+            Ok(UpstreamAuth::AwsIam { token_header, region })
+        }
+        _ => Err(ConfigError::Invalid("UPSTREAM_AUTH")),
     }
 }
 
@@ -202,11 +230,14 @@ impl Config {
         let upstream = UpstreamConfig::new(env.req("UPSTREAM_BASE_URL")?)
             .with_timeout(env.secs("PROXY_TIMEOUT_SECS", DEFAULT_PROXY_TIMEOUT_SECS)?);
 
+        let upstream_auth = upstream_auth(&env)?;
+
         Ok(Self {
             app,
             cognito,
             http,
             upstream,
+            upstream_auth,
             table: env.req("SESSIONS_TABLE")?,
             secret_cache_ttl: env.secs("SECRET_CACHE_TTL_SECS", DEFAULT_SECRET_TTL_SECS)?,
             dynamodb_endpoint: if cfg!(feature = "local") {
@@ -312,6 +343,66 @@ mod tests {
         let mut m = base();
         m.remove("SESSIONS_TABLE");
         assert_eq!(load(&m).unwrap_err(), ConfigError::Missing("SESSIONS_TABLE"));
+    }
+
+    #[test]
+    fn upstream_auth_por_defecto_es_none() {
+        assert_eq!(load(&base()).unwrap().upstream_auth, UpstreamAuth::None);
+        let mut m = base();
+        m.insert("UPSTREAM_AUTH", "none");
+        assert_eq!(load(&m).unwrap().upstream_auth, UpstreamAuth::None);
+    }
+
+    #[test]
+    fn upstream_auth_aws_iam() {
+        let mut m = base();
+        m.insert("UPSTREAM_AUTH", "aws_iam");
+        m.insert("UPSTREAM_TOKEN_HEADER", "x-bff-access-token");
+        m.insert("AWS_REGION", "us-east-2");
+        let esperado = |region: &str| UpstreamAuth::AwsIam {
+            token_header: "x-bff-access-token".to_owned(),
+            region: region.to_owned(),
+        };
+        assert_eq!(load(&m).unwrap().upstream_auth, esperado("us-east-2"));
+        m.insert("UPSTREAM_AWS_REGION", "us-west-2");
+        assert_eq!(load(&m).unwrap().upstream_auth, esperado("us-west-2"));
+        m.remove("UPSTREAM_AWS_REGION");
+        m.remove("AWS_REGION");
+        assert_eq!(load(&m).unwrap_err(), ConfigError::Missing("UPSTREAM_AWS_REGION"));
+    }
+
+    #[test]
+    fn upstream_auth_rechaza_lo_invalido() {
+        let caso = |auth: &'static str, header: Option<&'static str>| {
+            let mut m = base();
+            m.insert("AWS_REGION", "us-east-2");
+            m.insert("UPSTREAM_AUTH", auth);
+            if let Some(h) = header {
+                m.insert("UPSTREAM_TOKEN_HEADER", h);
+            }
+            load(&m).unwrap_err()
+        };
+        assert_eq!(caso("sigv4", None), ConfigError::Invalid("UPSTREAM_AUTH"));
+        assert_eq!(caso("AWS_IAM", None), ConfigError::Invalid("UPSTREAM_AUTH"));
+        assert_eq!(
+            caso("aws_iam", None),
+            ConfigError::Missing("UPSTREAM_TOKEN_HEADER")
+        );
+        for h in [
+            "authorization",
+            "host",
+            "cookie",
+            "x-amz-security-token",
+            "X-Bff-Token",
+            "x bff",
+            "x_bff",
+        ] {
+            assert_eq!(
+                caso("aws_iam", Some(h)),
+                ConfigError::Invalid("UPSTREAM_TOKEN_HEADER"),
+                "{h}"
+            );
+        }
     }
 
     #[test]
